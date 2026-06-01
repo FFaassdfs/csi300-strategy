@@ -1,0 +1,4 @@
+baostock>=0.8.8
+akshare>=1.10.0
+pandas>=1.5.0
+duckdb>=0.9.0
