@@ -28,41 +28,52 @@
 ## 目录结构
 
 ```
-csi300_strategy/
-├── README.md                    # 本文件
-├── requirements.txt             # 依赖列表
+hs300/
+├── README.md                     # 本文件
+├── requirements.txt              # 依赖列表
 ├── generate_html_report.py       # 生成HTML策略报告（主程序）
-├── execute_daily.py             # 每日执行脚本
-├── run_strategy.py             # 策略运行器
+├── execute_daily.py              # 每日执行脚本
+├── run_strategy.py               # 策略运行器
+├── build_db_and_backtest.py      # 数据下载 + 数据库构建 + 回测
+├── csi300_data.duckdb            # 沪深300历史数据库
 ├── strategies/
-│   └── csi300_strategies.py    # 三个策略定义
+│   └── csi300_strategies.py      # 三个策略定义 + 指标计算
 └── reports/
-    └── daily_signal_*.html     # 每日报告输出
+    ├── daily_signal_*.html       # 每日报告输出
+    └── backtest_report.txt       # 回测报告
 ```
 
 ## 使用方法
 
 ```bash
-cd D:/opencode/etf/csi300_strategy
+cd hs300
 py -3.11 generate_html_report.py
 ```
 
-## 回测结果（2021-2025）
+## 回测结果（2021-08 ~ 2026-06，真实数据 + Wilder标准ADX）
 
-| 策略 | 年化收益 | Sharpe | 最大回撤 |
-|------|---------|--------|---------|
-| ADX Override | +8.44% | 0.68 | -13.60% |
-| Momentum Override | +7.63% | 0.73 | -11.74% |
-| Absolute 15% | +3.29% | 0.48 | -11.74% |
-| Buy&Hold | +16.24% | 0.32 | -36.05% |
+| 策略 | 年化收益 | Sharpe | 最大回撤 | 持仓比例 | 交易次数 |
+|------|---------|--------|---------|---------|---------|
+| ADX Override | +7.71% | 0.48 | -10.99% | 35.9% | 77 |
+| Momentum Override | +3.55% | 0.11 | -10.99% | 28.4% | 80 |
+| Absolute 15% | +2.32% | -0.03 | -10.10% | 26.1% | 74 |
+| Buy&Hold (基准) | +0.19% | -- | -37.86% | 100% | 0 |
 
-## 策略对比说明
+> 注：Buy & Hold 在该回测区间年化仅 +0.19%（沪深300近5年基本持平），最大回撤达 -37.86%
 
-| 策略 | 适用场景 | 优点 |
-|------|---------|------|
-| ADX Override | 强趋势市场 | 牛市参与度高 |
-| Momentum Override | 趋势/动量市场 | Sharpe最高 |
-| Absolute 15% | 保守操作 | 熊市保护强 |
+## 回测结论
+
+1. **ADX Override 是最优策略**：年化 +7.71%、最大回撤仅 -10.99%，三项策略中唯一 Sharpe > 0 的
+2. **Absolute 15% 过于保守**：Sharpe 为负，连无风险利率都跑不赢，26% 时间空仓错过太多机会
+3. **Momentum Override 动量阈值偏高**：20日涨 10% 在 A 股触发频率太低，多数时间由波动率条件维持信号
+4. **统一优势**：三个策略均将最大回撤从 -37.86% 降至 -10% 左右，风控效果显著
+
+## 运行回测
+
+```bash
+cd hs300
+python build_db_and_backtest.py   # 下载数据 + 构建数据库 + 回测
+```
 
 ## 注意事项
 

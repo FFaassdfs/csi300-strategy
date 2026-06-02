@@ -1,6 +1,6 @@
 """
 CSI300 ETF 每日策略执行脚本
-生成明日交易信号
+主策略: ADX Override (价格>MA50 AND (波动率<15% OR ADX>25))
 """
 import pandas as pd
 import numpy as np
@@ -8,11 +8,15 @@ import os
 import sys
 from datetime import datetime
 
-sys.path.insert(0, r'D:/opencode/etf')
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, PROJECT_ROOT)
+
+from strategies.csi300_strategies import (
+    compute_adx, compute_volatility, compute_ma, compute_momentum,
+)
 
 # ========== 获取数据 ==========
 print('正在获取数据...')
-
 try:
     import akshare as ak
     df_310 = ak.fund_etf_hist_sina(symbol='sh510310')
@@ -32,13 +36,11 @@ except Exception as e:
 
 # ========== 计算指标 ==========
 close = df['close_etf']
-vol = close.pct_change().rolling(20).std() * np.sqrt(252) * 100
-ma50 = close.rolling(50).mean()
-momentum = (close / close.shift(20) - 1)
-atr = close.rolling(14).apply(lambda x: np.max(np.abs(x - x.shift(1))))
-adx = (vol / atr).rolling(14).mean()
+vol = compute_volatility(df)
+ma50 = compute_ma(df)
+momentum = compute_momentum(df)
+adx = compute_adx(df)
 
-# 最新值
 last_close = close.iloc[-1]
 last_vol = vol.iloc[-1]
 last_ma50 = ma50.iloc[-1]
@@ -46,122 +48,74 @@ last_momentum = momentum.iloc[-1]
 last_adx = adx.iloc[-1]
 last_date = df['date'].max()
 
-# ========== 策略逻辑 ==========
-def check_adx_override():
-    """ADX Override策略"""
-    above_ma = last_close > last_ma50
-    low_vol = last_vol < 15
-    strong_trend = last_adx > 25
-    signal = 1 if (above_ma and (low_vol or strong_trend)) else 0
-    trigger = 'ADX>25' if strong_trend else ('低波动' if low_vol else '高波动')
-    return signal, trigger
+# ========== 主策略: ADX Override ==========
+above_ma = last_close > last_ma50
+low_vol = last_vol < 15
+strong_trend = last_adx > 25
 
-def check_momentum_override():
-    """Momentum Override策略"""
-    above_ma = last_close > last_ma50
-    low_vol = last_vol < 15
-    strong_momentum = last_momentum > 0.10
-    signal = 1 if (above_ma and (low_vol or strong_momentum)) else 0
-    trigger = '动量>10%' if strong_momentum else ('低波动' if low_vol else '高波动')
-    return signal, trigger
-
-def check_absolute_15():
-    """Absolute 15%策略"""
-    above_ma = last_close > last_ma50
-    low_vol = last_vol < 15
-    signal = 1 if (above_ma and low_vol) else 0
-    trigger = '低波动' if low_vol else '高波动'
-    return signal, trigger
-
-# ========== 生成报告 ==========
-print()
-print('='*70)
-print('CSI300 ETF 策略信号报告')
-print('数据日期:', last_date.strftime('%Y-%m-%d'))
-print('='*70)
-
-results = {}
-
-# ADX Override
-sig, trigger = check_adx_override()
-results['ADX Override'] = {'signal': 'CSI300' if sig==1 else 'BOND', 'trigger': trigger}
-print()
-print('【+ADX>25 Override策略】')
-print('  信号:', results['ADX Override']['signal'])
-print('  触发:', trigger)
-print('  收盘价:', round(last_close, 4))
-print('  MA50:', round(last_ma50, 4))
-print('  20日波动率:', round(last_vol, 2), '%')
-print('  ADX:', round(last_adx, 2))
-print('  价格>MA50:', '是' if last_close > last_ma50 else '否')
-
-# Momentum Override
-sig, trigger = check_momentum_override()
-results['Momentum Override'] = {'signal': 'CSI300' if sig==1 else 'BOND', 'trigger': trigger}
-print()
-print('【+Momentum>10% Override策略】')
-print('  信号:', results['Momentum Override']['signal'])
-print('  触发:', trigger)
-print('  收盘价:', round(last_close, 4))
-print('  MA50:', round(last_ma50, 4))
-print('  20日波动率:', round(last_vol, 2), '%')
-print('  20日动量:', round(last_momentum*100, 2), '%')
-print('  价格>MA50:', '是' if last_close > last_ma50 else '否')
-
-# Absolute 15%
-sig, trigger = check_absolute_15()
-results['Absolute 15%'] = {'signal': 'CSI300' if sig==1 else 'BOND', 'trigger': trigger}
-print()
-print('【Base Absolute 15%策略】')
-print('  信号:', results['Absolute 15%']['signal'])
-print('  触发:', trigger)
-print('  收盘价:', round(last_close, 4))
-print('  MA50:', round(last_ma50, 4))
-print('  20日波动率:', round(last_vol, 2), '%')
-print('  价格>MA50:', '是' if last_close > last_ma50 else '否')
-
-# ========== 汇总建议 ==========
-print()
-print('='*70)
-print('【明日交易建议汇总】')
-print('='*70)
-
-signals = [r['signal'] for r in results.values()]
-unique_signals = set(signals)
-
-if len(unique_signals) == 1:
-    final = list(unique_signals)[0]
-    print('一致信号:', final)
-    if final == 'CSI300':
-        print()
-        print('>>> 建议: 持有/买入 沪深300ETF (510310) <<<')
-        print()
-    else:
-        print()
-        print('>>> 建议: 持有/买入 国债ETF (511260) <<<')
-        print()
+main_signal = 1 if (above_ma and (low_vol or strong_trend)) else 0
+if strong_trend:
+    main_trigger = 'ADX>25 趋势确认'
+elif low_vol:
+    main_trigger = '低波动'
 else:
-    print('策略分歧:')
-    for name, r in results.items():
-        print(' ', name, ':', r['signal'], '('+r['trigger']+')')
+    main_trigger = '高波动/低趋势'
 
-# 保存报告
-report_dir = r'D:/opencode/etf/reports'
+# ========== 辅助参考 ==========
+# BB %B
+bb_mid = close.rolling(20).mean()
+bb_std = close.rolling(20).std()
+bb_lower = bb_mid - 2 * bb_std
+bb_upper = bb_mid + 2 * bb_std
+last_bb_pct_b = (last_close - bb_lower.iloc[-1]) / (bb_upper.iloc[-1] - bb_lower.iloc[-1] + 1e-10)
+bb_oversold = last_bb_pct_b < 0.2 and last_close > last_ma50
+
+# MACD
+ema12 = close.ewm(span=12, adjust=False).mean()
+ema26 = close.ewm(span=26, adjust=False).mean()
+last_macd_hist = (ema12 - ema26 - (ema12 - ema26).ewm(span=9, adjust=False).mean()).iloc[-1]
+aux_conservative = 1 if (main_signal == 1 and last_macd_hist > 0) else 0
+conservative_diverges = (main_signal == 1 and aux_conservative == 0)
+
+# ========== 输出 ==========
+print()
+print('=' * 60)
+print('  CSI300 ETF 策略信号报告')
+print('  数据日期:', last_date.strftime('%Y-%m-%d'))
+print('=' * 60)
+print()
+print('  ── 市场指标 ──')
+print(f'  沪深300:    {last_close:.2f}')
+print(f'  MA50:       {last_ma50:.2f}  ({"上方" if above_ma else "下方"})')
+print(f'  波动率(20d): {last_vol:.2f}%  (阈值15%)')
+print(f'  ADX:        {last_adx:.2f}  (阈值25)')
+print(f'  动量(20d):  {last_momentum*100:+.2f}%')
+print()
+print('  ── 主策略: ADX Override ──')
+print(f'  信号:       {"持有CSI300" if main_signal==1 else "持有国债"}')
+print(f'  触发条件:   {main_trigger}')
+print()
+print('  ── 辅助参考（观察，不执行）──')
+print(f'  布林带 %B:   {last_bb_pct_b:.2f}  {"[!] 极端超卖区间!" if bb_oversold else "正常区间"}')
+print(f'  保守信号:     {"[!] 与主信号分歧!" if conservative_diverges else "[OK] 与主信号一致"}  (MACD柱={last_macd_hist:+.2f})')
+print()
+print('=' * 60)
+
+if main_signal == 1:
+    print('  >>> 建议: 持有/买入 沪深300ETF (510310) <<<')
+else:
+    print('  >>> 建议: 持有/买入 国债ETF (511260) <<<')
+
+# ========== 保存报告 ==========
+report_dir = os.path.join(PROJECT_ROOT, 'reports')
 os.makedirs(report_dir, exist_ok=True)
 report_file = os.path.join(report_dir, 'daily_signal_' + last_date.strftime('%Y%m%d') + '.txt')
 
 with open(report_file, 'w', encoding='utf-8') as f:
-    f.write('CSI300 ETF 策略信号报告\n')
-    f.write('='*50 + '\n')
-    f.write('日期: ' + last_date.strftime('%Y-%m-%d') + '\n')
-    f.write('='*50 + '\n\n')
-    f.write('510300 收盘: ' + str(round(last_close, 4)) + '\n')
-    f.write('MA50: ' + str(round(last_ma50, 4)) + '\n')
-    f.write('20日波动率: ' + str(round(last_vol, 2)) + '%\n')
-    f.write('20日动量: ' + str(round(last_momentum*100, 2)) + '%\n')
-    f.write('ADX: ' + str(round(last_adx, 2)) + '\n\n')
-    f.write('策略信号:\n')
-    for name, r in results.items():
-        f.write('  ' + name + ': ' + r['signal'] + '\n')
+    f.write(f'CSI300 ETF 策略信号报告 - 主策略: ADX Override\n')
+    f.write('=' * 50 + '\n')
+    f.write(f'日期: {last_date.strftime("%Y-%m-%d")}\n')
+    f.write(f'收盘: {last_close:.2f}  MA50: {last_ma50:.2f}  波动率: {last_vol:.2f}%  ADX: {last_adx:.2f}\n')
+    f.write(f'主信号: {"持有CSI300" if main_signal==1 else "持有国债"}  ({main_trigger})\n')
 
-print('报告已保存到:', report_file)
+print(f'\n报告已保存: {report_file}')

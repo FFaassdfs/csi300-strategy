@@ -9,14 +9,14 @@ import os
 import sys
 from datetime import datetime, timedelta
 
-# 添加策略路径
-sys.path.insert(0, r'D:/opencode/etf')
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, PROJECT_ROOT)
 
 from strategies.csi300_strategies import (
     STRATEGIES, get_strategy, generate_trade_signal
 )
 
-# 数据获取（支持多种数据源）
+
 def get_latest_data(days=300):
     """获取最新数据"""
     try:
@@ -61,18 +61,15 @@ def run_strategy_report(df, output_path=None):
     for strategy_key in ['adx_override', 'momentum_override', 'absolute_15']:
         strategy = get_strategy(strategy_key)
 
-        # 假设当前持仓为BOND（实际使用时需根据持仓情况调整）
         result = generate_trade_signal(df, strategy_key, position='bond')
         results[strategy_key] = result
 
-        # 打印策略信息
         print(f'【{strategy["name"]}】')
         print(f'  策略描述: {strategy["description"]}')
         print(f'  信号: {result["signal"]}')
         print(f'  建议操作: {result["action"]}')
         print()
 
-        # 指标详情
         ind = result['indicators']
         print(f'  指标详情:')
         print(f'    收盘价:     {ind["close"]:.4f}')
@@ -90,13 +87,12 @@ def run_strategy_report(df, output_path=None):
     print('交易建议汇总')
     print('=' * 70)
 
-    signals = [r['signal'] for r in results.values()]
-    actions = [r['action'] for r in results.values()]
+    signals_list = [r['signal'] for r in results.values()]
+    actions_list = [r['action'] for r in results.values()]
 
-    # 一致性检查
-    if len(set(signals)) == 1:
-        print(f'【一致】所有策略信号: {signals[0]}')
-        print(f'建议操作: {actions[0]}')
+    if len(set(signals_list)) == 1:
+        print(f'【一致】所有策略信号: {signals_list[0]}')
+        print(f'建议操作: {actions_list[0]}')
     else:
         print('【分歧】各策略信号不一致:')
         for key, r in results.items():
@@ -134,8 +130,9 @@ def main():
     print(f'获取到 {len(df)} 条数据, 日期范围: {df["date"].min()} 到 {df["date"].max()}')
 
     # 生成报告
-    output_path = r'D:/opencode/etf/reports/daily_signal.txt'
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    report_dir = os.path.join(PROJECT_ROOT, 'reports')
+    os.makedirs(report_dir, exist_ok=True)
+    output_path = os.path.join(report_dir, 'daily_signal.txt')
 
     results = run_strategy_report(df, output_path)
 

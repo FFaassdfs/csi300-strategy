@@ -7,6 +7,63 @@ import pandas as pd
 import numpy as np
 import os
 
+
+def compute_atr(df, period=14):
+    """计算 Average True Range (Wilder平滑)"""
+    high = df['high_etf']
+    low = df['low_etf']
+    close = df['close_etf']
+
+    tr1 = high - low
+    tr2 = abs(high - close.shift(1))
+    tr3 = abs(low - close.shift(1))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1 / period, adjust=False).mean()
+    return atr
+
+
+def compute_adx(df, period=14):
+    """计算 ADX (Average Directional Index, Wilder标准算法)"""
+    high = df['high_etf']
+    low = df['low_etf']
+    close = df['close_etf']
+
+    atr = compute_atr(df, period)
+
+    up_move = high.diff()
+    down_move = -low.diff()
+
+    plus_dm = pd.Series(0.0, index=df.index)
+    minus_dm = pd.Series(0.0, index=df.index)
+    plus_dm[(up_move > down_move) & (up_move > 0)] = up_move
+    minus_dm[(down_move > up_move) & (down_move > 0)] = down_move
+
+    plus_di = 100 * plus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr
+    minus_di = 100 * minus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr
+
+    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)
+    adx = dx.ewm(alpha=1 / period, adjust=False).mean()
+    return adx
+
+
+def compute_volatility(df, period=20):
+    """计算年化波动率"""
+    close = df['close_etf']
+    vol = close.pct_change().rolling(period).std() * np.sqrt(252) * 100
+    return vol
+
+
+def compute_ma(df, period=50):
+    """计算移动均线"""
+    return df['close_etf'].rolling(period).mean()
+
+
+def compute_momentum(df, period=20):
+    """计算N日动量"""
+    close = df['close_etf']
+    return close / close.shift(period) - 1
+
+
 # ========== 策略1: +ADX>25 Override ==========
 def adx_override_strategy(df):
     """
@@ -14,13 +71,9 @@ def adx_override_strategy(df):
     卖出信号: 价格 < MA50 OR 波动率 >= 15%
     """
     close = df['close_etf']
-    vol = close.pct_change().rolling(20).std() * np.sqrt(252) * 100
-    ma50 = close.rolling(50).mean()
-
-    high = df['close_etf']
-    low = df['close_etf']
-    atr = close.rolling(14).apply(lambda x: np.max(np.abs(x - x.shift(1)))).values
-    adx = pd.Series(vol / atr).rolling(14).mean()
+    vol = compute_volatility(df)
+    ma50 = compute_ma(df)
+    adx = compute_adx(df)
 
     above_ma = close > ma50
     low_vol = vol < 15
@@ -37,9 +90,9 @@ def momentum_override_strategy(df):
     卖出信号: 价格 < MA50 OR 波动率 >= 15%
     """
     close = df['close_etf']
-    vol = close.pct_change().rolling(20).std() * np.sqrt(252) * 100
-    ma50 = close.rolling(50).mean()
-    momentum = (close / close.shift(20) - 1)
+    vol = compute_volatility(df)
+    ma50 = compute_ma(df)
+    momentum = compute_momentum(df)
 
     above_ma = close > ma50
     low_vol = vol < 15
@@ -56,8 +109,8 @@ def absolute_15_strategy(df):
     卖出信号: 价格 < MA50 OR 波动率 >= 15%
     """
     close = df['close_etf']
-    vol = close.pct_change().rolling(20).std() * np.sqrt(252) * 100
-    ma50 = close.rolling(50).mean()
+    vol = compute_volatility(df)
+    ma50 = compute_ma(df)
 
     above_ma = close > ma50
     low_vol = vol < 15
@@ -108,7 +161,7 @@ def generate_trade_signal(df, strategy_name, position='cash'):
     生成交易信号
 
     Args:
-        df: 包含 date, open, close 列的DataFrame
+        df: 包含日期、OHLC的ETF历史数据DataFrame (需有high_etf/low_etf/close_etf列)
         strategy_name: 策略名称
         position: 当前持仓 ('csi300' 或 'bond')
 
@@ -126,12 +179,12 @@ def generate_trade_signal(df, strategy_name, position='cash'):
     # 确定行动
     if last_signal == 1:
         if position == 'bond':
-            action = 'BUY_CSI300'  # 买入沪深300 ETF
+            action = 'BUY_CSI300'
         else:
             action = 'HOLD_CSI300'
     else:
         if position == 'csi300':
-            action = 'SELL_CSI300'  # 卖出沪深300，买入国债
+            action = 'SELL_CSI300'
         else:
             action = 'HOLD_BOND'
 

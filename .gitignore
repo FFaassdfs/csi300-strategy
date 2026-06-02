@@ -10,7 +10,7 @@ __pycache__/
 venv/
 env/
 
-# 报告（保持html历史记录）
+# 报告（忽略txt文本报告，保留HTML）
 reports/*.txt
 
 # IDE
