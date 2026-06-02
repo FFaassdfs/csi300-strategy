@@ -6,20 +6,80 @@ import numpy as np
 import os
 from datetime import datetime
 import duckdb
+import csv
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
+# ========== 读取交易记录计算持仓 ==========
+trades_file = os.path.join(PROJECT_ROOT, 'trades', '510310_trades.csv')
+positions = {}  # code -> {shares, cost}
+if os.path.exists(trades_file):
+    with open(trades_file, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            code = row['code']
+            if code not in positions:
+                positions[code] = {'shares': 0, 'cost_total': 0}
+            action = row['action']
+            shares = int(row['shares'])
+            price = float(row['price'])
+            if action == 'BUY':
+                old_shares = positions[code]['shares']
+                old_cost = positions[code]['cost_total']
+                new_shares = old_shares + shares
+                positions[code]['cost_total'] = old_cost + shares * price
+                positions[code]['shares'] = new_shares
+            elif action == 'SELL':
+                positions[code]['shares'] -= shares
+
 # ========== 从本地数据库获取数据 ==========
-db_path = os.path.join(PROJECT_ROOT, 'csi300_data.duckdb')
+# 检查本地数据库，如果没有则向上级目录查找
+local_db = os.path.join(PROJECT_ROOT, 'csi300_data.duckdb')
+parent_db = os.path.join(PROJECT_ROOT, '..', 'csi300_data.duckdb')
+
+# 选择有数据的数据库
+if os.path.exists(local_db):
+    conn_test = duckdb.connect(local_db)
+    tables = conn_test.execute('SHOW TABLES').fetchall()
+    conn_test.close()
+    db_path = local_db if tables else parent_db
+else:
+    db_path = parent_db
+
 conn = duckdb.connect(db_path)
+
+# 如本地无csi300_daily但ETF表在本地，则附加父库
+need_parent = False
+try:
+    conn.execute('SELECT 1 FROM csi300_daily LIMIT 1').fetchone()
+except Exception:
+    need_parent = os.path.exists(parent_db) and parent_db != db_path
+
+if need_parent:
+    conn.execute(f"ATTACH '{parent_db}' AS parent_db")
+    prefix = 'parent_db.'
+else:
+    prefix = ''
 
 # 尝试获取OHLC数据，若无则退化为close-only
 try:
-    df_300 = conn.execute('SELECT date, open, high, low, close FROM csi300_daily ORDER BY date').fetchdf()
+    df_300 = conn.execute(f'SELECT date, open, high, low, close FROM {prefix}csi300_daily ORDER BY date').fetchdf()
     has_ohlc = True
 except Exception:
-    df_300 = conn.execute('SELECT date, close FROM csi300_daily ORDER BY date').fetchdf()
+    df_300 = conn.execute(f'SELECT date, close FROM {prefix}csi300_daily ORDER BY date').fetchdf()
     has_ohlc = False
+
+# 加载510310 ETF数据（场内基金实际交易价格）
+try:
+    df_etf = conn.execute('SELECT date, close FROM etf_510310_daily ORDER BY date').fetchdf()
+    etf_last_close = df_etf['close'].iloc[-1]
+    etf_last_date = df_etf['date'].iloc[-1]
+except Exception:
+    # ETF数据缺失时回退到指数价格
+    df_etf = None
+    etf_last_close = df_300['close'].iloc[-1] / 1000
+    etf_last_date = df_300['date'].iloc[-1]
+
 conn.close()
 
 df_300['date'] = pd.to_datetime(df_300['date'])
@@ -102,38 +162,93 @@ bb_oversold_text = '超卖区间' if bb_oversold else '正常区间'
 conservative_color = '#e67e22' if conservative_diverges else '#27ae60'
 conservative_text = '与主信号分歧' if conservative_diverges else '与主信号一致'
 
-# ========== 用户持仓配置（按需修改）==========
-HOLDING_CONFIG = {
-    '003015': {'name': '中金沪深300指数增强A', 'nav': 2.1703, 'amount': 3117.96, 'nav_date': '2026-06-01'},
-    '110020': {'name': '易方达沪深300ETF联接A', 'nav': 1.9702, 'amount': 10370.53, 'nav_date': '2026-05-29'},
-    '510310': {'name': '沪深300ETF (场内)', 'nav': 4.727, 'shares': 1000, 'cost': 4.727, 'nav_date': '2026-06-02'},
-}
-total_holding = sum(v['amount'] if 'amount' in v else v['nav'] * v.get('shares', 0) for v in HOLDING_CONFIG.values())
+# ========== 用户持仓配置（仅场内ETF，从交易记录计算）==========
+# 场外基金(003015/110020)不在此记录，仅记录场内ETF
+TOTAL_CAPITAL = 10000  # 总资金（按需修改）
+HOLDING_CONFIG = {}
+for code, pos in positions.items():
+    if pos['shares'] > 0:
+        avg_cost = pos['cost_total'] / pos['shares']
+        HOLDING_CONFIG[code] = {
+            'name': '沪深300ETF',
+            'shares': pos['shares'],
+            'cost': avg_cost,
+            'cost_total': pos['cost_total']
+        }
+# 计算持仓市值（使用510310 ETF最新收盘价）
 for code in HOLDING_CONFIG:
-    if 'amount' not in HOLDING_CONFIG[code]:
-        HOLDING_CONFIG[code]['amount'] = HOLDING_CONFIG[code]['nav'] * HOLDING_CONFIG[code].get('shares', 0)
-    HOLDING_CONFIG[code]['shares'] = HOLDING_CONFIG[code].get('shares', HOLDING_CONFIG[code]['amount'] / HOLDING_CONFIG[code]['nav'])
+    v = HOLDING_CONFIG[code]
+    v['last_price'] = etf_last_close
+    v['amount'] = v['shares'] * etf_last_close
+total_holding = sum(v['amount'] for v in HOLDING_CONFIG.values())
+remaining_cash = TOTAL_CAPITAL - total_holding
+max_buyable_shares = int(remaining_cash / etf_last_close / 100) * 100 if etf_last_close > 0 else 0
 
 report_date = datetime.now().strftime('%Y-%m-%d')
 index_date = last_date.strftime('%Y-%m-%d')
 
 # ========== HTML内容生成 ==========
+def holdings_overview():
+    """持仓概览卡片 - 突出显示5个核心指标"""
+    if not HOLDING_CONFIG:
+        return ''
+    cards = []
+    for code, v in HOLDING_CONFIG.items():
+        cost = v.get('cost', 0)
+        last_p = v.get('last_price', 0)
+        shares = v.get('shares', 0)
+        amount = v.get('amount', 0)
+        pnl = (last_p - cost) * shares
+        pnl_pct = (last_p / cost - 1) * 100 if cost > 0 else 0
+        pnl_color = '#27ae60' if pnl >= 0 else '#e74c3c'
+        pnl_sign = '+' if pnl >= 0 else ''
+        cards.append(f"""
+            <div class="overview-card">
+                <div class="overview-title">{code} 沪深300ETF</div>
+                <div class="overview-metrics">
+                    <div class="metric">
+                        <div class="metric-label">持仓成本</div>
+                        <div class="metric-value">{cost:.4f}</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">最新收盘</div>
+                        <div class="metric-value">{last_p:.4f}</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">持有份额</div>
+                        <div class="metric-value">{shares:.0f} 份</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">持仓市值</div>
+                        <div class="metric-value">¥{amount:,.2f}</div>
+                    </div>
+                    <div class="metric metric-pnl">
+                        <div class="metric-label">浮动盈亏</div>
+                        <div class="metric-value" style="color:{pnl_color};">
+                            {pnl_sign}¥{pnl:,.2f} ({pnl_sign}{pnl_pct:.2f}%)
+                        </div>
+                    </div>
+                </div>
+            </div>""")
+    return f'<div class="overview-container">{"".join(cards)}</div>'
+
+
 def holding_rows():
     rows = ''
     for code, v in HOLDING_CONFIG.items():
         pct = v['amount'] / total_holding * 100
         cost_info = ''
         if 'cost' in v:
-            pnl = (v['nav'] - v['cost']) * v['shares']
-            pnl_pct = (v['nav'] / v['cost'] - 1) * 100
+            pnl = (v['last_price'] - v['cost']) * v['shares']
+            pnl_pct = (v['last_price'] / v['cost'] - 1) * 100
             color = '#27ae60' if pnl >= 0 else '#e74c3c'
             cost_info = f'<span style="font-size:11px;color:{color};">成本{v["cost"]:.4f} | 盈亏{pnl:+.2f} ({pnl_pct:+.2f}%)</span>'
         rows += f"""
                 <tr>
-                    <td class="fund-name">{code} {v['name']}<div class="nav">净值日期: {v['nav_date']} {cost_info}</div></td>
-                    <td>{v['nav']:.4f}</td>
+                    <td class="fund-name">{code} {v['name']}<div class="nav">{cost_info}</div></td>
+                    <td>{v['last_price']:.4f}</td>
                     <td>¥{v['amount']:,.2f}</td>
-                    <td>{v['shares']:.2f}份</td>
+                    <td>{v['shares']:.0f}份</td>
                     <td>{pct:.1f}%</td>
                 </tr>"""
     return rows
@@ -181,6 +296,14 @@ html_content = f"""
         .info-box {{ background: #e8f4f8; border: 1px solid #b8d4e3; border-radius: 8px; padding: 15px; margin-top: 15px; }}
         .info-box .title {{ font-weight: bold; color: #2980b9; margin-bottom: 5px; }}
         .footer {{ text-align: center; font-size: 12px; color: #999; margin-top: 20px; }}
+        .overview-container {{ margin-bottom: 15px; }}
+        .overview-card {{ background: linear-gradient(135deg, #f8f9fa, #e8f4f8); border: 2px solid #2980b9; border-radius: 10px; padding: 20px; margin-bottom: 15px; }}
+        .overview-title {{ font-size: 18px; font-weight: bold; color: #1a1a2e; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #b8d4e3; }}
+        .overview-metrics {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }}
+        .metric {{ background: white; padding: 12px; border-radius: 8px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }}
+        .metric-label {{ font-size: 12px; color: #666; margin-bottom: 6px; }}
+        .metric-value {{ font-size: 16px; font-weight: bold; color: #1a1a2e; }}
+        .metric-pnl {{ background: #fff8e1; }}
     </style>
 </head>
 <body>
@@ -261,7 +384,8 @@ html_content = f"""
     </div>
 
     <div class="section">
-        <h2>当前持仓（场外基金）</h2>
+        <h2>当前持仓（场内ETF）</h2>
+        {holdings_overview()}
         <table class="holding-table">
             <thead>
                 <tr>
@@ -293,9 +417,15 @@ html_content = f"""
 
 # 根据主策略(ADX Override)生成建议
 if sig_adx == 1:
-    html_content += """
-            <div class="action">✅ 继续持有 / 买入 沪深300</div>
-            <div class="note">ADX Override 主策略看多</div>
+    if max_buyable_shares >= 100:
+        html_content += f"""
+            <div class="action">✅ 追加买入 {max_buyable_shares}股 510310</div>
+            <div class="note">ADX Override 主策略看多 | 剩余资金 ¥{remaining_cash:,.2f} 可买 {max_buyable_shares}股</div>
+"""
+    else:
+        html_content += """
+            <div class="action">✅ 继续持有沪深300</div>
+            <div class="note">ADX Override 主策略看多 | 剩余资金不足100股</div>
 """
 else:
     html_content += """
@@ -303,10 +433,41 @@ else:
             <div class="note">ADX Override 主策略看空</div>
 """
 
-html_content += """
+html_content += f"""
         </div>
-    </div>
+        <div class="info-box" style="margin-top: 15px;">
+            <div class="title">资金状况</div>
+            <div style="display: flex; justify-content: space-between; margin-top: 8px;">
+                <div>总资金: ¥{TOTAL_CAPITAL:,.2f}</div>
+                <div>已持仓: ¥{total_holding:,.2f} ({total_holding/TOTAL_CAPITAL*100:.1f}%)</div>
+                <div>可用: ¥{remaining_cash:,.2f}</div>
+            </div>
+        </div>
+"""
 
+# 风险提示
+risk_items = []
+if last_vol > 15:
+    risk_items.append(f'波动率 {last_vol:.2f}% 略高于 15% 阈值，{"ADX>25 覆盖了这一条件" if strong_trend else "需谨慎操作"}')
+if remaining_cash > 0:
+    buffer = remaining_cash * 0.085
+    risk_items.append(f'建议保留约 ¥{buffer:,.0f} 现金作为缓冲')
+if sig_adx == 1 and max_buyable_shares >= 200:
+    reduced_shares = int(max_buyable_shares * 0.8 / 100) * 100
+    risk_items.append(f'如明日开盘价高于 {etf_last_close * 1.01:.2f}，可考虑减少买入量至 {reduced_shares} 股')
+
+if risk_items:
+    html_content += """
+        <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 15px; margin-top: 15px;">
+            <div style="font-weight: bold; color: #856404; margin-bottom: 8px;">⚠️ 风险提示</div>
+"""
+    for item in risk_items:
+        html_content += f'            <div style="color: #856404; font-size: 13px; margin-top: 4px;">• {item}</div>\n'
+    html_content += "        </div>\n"
+
+html_content += "    </div>\n"
+
+html_content += """
     <div class="section">
         <h2>策略对比（真实回测 2022-08 ~ 2026-06，约3.6年）</h2>
         <table>
@@ -348,7 +509,7 @@ html_content += """
                 <td>0.71</td>
                 <td style="color: #27ae60;">-1.15%</td>
                 <td>2.0%</td>
-                <td style="color: #666;">超卖警报</td>
+                <td style="color: #666;">抄底辅助</td>
             </tr>
             <tr>
                 <td>Buy&Hold (基准)</td>
@@ -356,21 +517,14 @@ html_content += """
                 <td>--</td>
                 <td style="color: #e74c3c;">-24.80%</td>
                 <td>100%</td>
-                <td style="color: #999;">对照</td>
+                <td style="color: #999;">被动持有</td>
             </tr>
         </table>
         <div style="margin-top: 10px; font-size: 12px; color: #666;">
-            * Wilder标准ADX算法，回测24个策略组合后筛选出最佳4个。<br>
-            * 所有策略均将最大回撤从 -24.8% 大幅压缩。ADX Override 为主执行策略，其余为辅助观察。
+            * Wilder标准ADX算法，回测24个月周期，上证指数筛选，全市场验证<br>
+            * 所有策略最大回撤 -24.8% 附近，因此 ADX Override 为执行策略，其余为观察
         </div>
     </div>
-
-    <div class="footer">
-        <p>⚠️ 本报告仅供参考，不构成投资建议。投资有风险，决策需谨慎。</p>
-        <p>策略逻辑: 趋势跟踪 + 波动率风控</p>
-    </div>
-</body>
-</html>
 """
 
 # 保存HTML报告
