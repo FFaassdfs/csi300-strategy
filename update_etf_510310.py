@@ -2,7 +2,7 @@
 下载 510310 沪深300ETF 近5年价格数据并入库
 - 数据源: akshare (ak.fund_etf_hist_sina, 新浪财经)
 - 表名: etf_510310_daily
-- 存储位置: D:/opencode/etf/csi300_strategy/csi300_data.duckdb (本地项目库)
+- 存储位置: csi300_data.duckdb (项目本地)
 """
 import akshare as ak
 import pandas as pd
