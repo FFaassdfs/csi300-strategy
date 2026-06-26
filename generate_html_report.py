@@ -7,8 +7,19 @@ import os
 from datetime import datetime
 import duckdb
 import csv
+import json
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# ========== 读取舆情数据 ==========
+SENTIMENT_FILE = os.path.join(PROJECT_ROOT, 'reports', 'sentiment_data.json')
+sentiment = {}
+if os.path.exists(SENTIMENT_FILE):
+    try:
+        with open(SENTIMENT_FILE, 'r', encoding='utf-8') as f:
+            sentiment = json.load(f)
+    except Exception:
+        pass
 
 # ========== 读取交易记录计算持仓 ==========
 trades_file = os.path.join(PROJECT_ROOT, 'trades', '510310_trades.csv')
@@ -188,6 +199,94 @@ report_date = datetime.now().strftime('%Y-%m-%d')
 index_date = last_date.strftime('%Y-%m-%d')
 
 # ========== HTML内容生成 ==========
+def generate_sentiment_panel():
+    """生成舆情面板HTML"""
+    if not sentiment:
+        return '<p style="color:#999;">舆情数据暂未采集，请运行 sentiment_collector.py 或 daily_refresh.py</p>'
+
+    lines = ['<div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">']
+
+    # 北向资金
+    nf = sentiment.get("north_flow", {})
+    nf_color = "#27ae60" if nf.get("status") == "流入" else "#e74c3c"
+    lines.append(f'''<div style="background:#f8f9fa;padding:12px;border-radius:8px;">
+        <strong>北向资金</strong> <span style="font-size:11px;color:#999;">{nf.get("date","")}</span><br>
+        <span style="font-size:20px;font-weight:bold;color:{nf_color};">{nf.get("net_flow",0):+.1f}亿</span>
+        <span style="color:{nf_color};">{nf.get("status","")}</span>
+    </div>''')
+
+    # QVIX
+    qv = sentiment.get("qvix", {})
+    qv_color = "#e74c3c" if qv.get("level") == "恐慌" else "#e67e22" if qv.get("level") == "偏高" else "#27ae60"
+    lines.append(f'''<div style="background:#f8f9fa;padding:12px;border-radius:8px;">
+        <strong>QVIX恐慌指数</strong> <span style="font-size:11px;color:#999;">{qv.get("date","")}</span><br>
+        <span style="font-size:20px;font-weight:bold;color:{qv_color};">{qv.get("qvix",0):.1f}</span>
+        <span style="font-size:12px;color:#666;">({qv.get("change",0):+.1f})</span>
+        <span style="color:{qv_color};">{qv.get("level","")}</span>
+    </div>''')
+
+    # 市场资金
+    mf = sentiment.get("market_flow", {})
+    mf_color = "#27ae60" if mf.get("direction") == "流入" else "#e74c3c"
+    lines.append(f'''<div style="background:#f8f9fa;padding:12px;border-radius:8px;">
+        <strong>主力资金</strong> <span style="font-size:11px;color:#999;">{mf.get("date","")}</span><br>
+        <span style="font-size:20px;font-weight:bold;color:{mf_color};">{mf.get("main_net",0):+.1f}亿</span>
+        <span style="color:{mf_color};">{mf.get("direction","")}</span>
+    </div>''')
+
+    # 全球概览
+    gl = sentiment.get("global", {})
+    gl_lines = []
+    for name, v in sorted(gl.items()):
+        c = v.get("change_pct", 0)
+        color = "#27ae60" if c > 0 else "#e74c3c" if c < 0 else "#999"
+        gl_lines.append(f'<span>{name} <span style="color:{color};">{c:+.1f}%</span></span>')
+    if gl_lines:
+        lines.append(f'''<div style="background:#f8f9fa;padding:12px;border-radius:8px;">
+            <strong>全球指数</strong><br>
+            <div style="font-size:12px;margin-top:5px;">{" | ".join(gl_lines)}</div>
+        </div>''')
+
+    lines.append('</div>')
+
+    # 相关性矩阵
+    corr = sentiment.get("correlation", {})
+    if corr:
+        etf_names = {"510310": "沪深300", "511260": "国债", "159995": "芯片", "159915": "创业板", "510050": "上证50"}
+        lines.append('<div style="margin-top:15px;"><strong>多品种相关性 (2年日收益)</strong></div>')
+        lines.append('<table style="font-size:11px;margin-top:5px;"><tr><th></th>')
+        for name in sorted(corr.keys()):
+            label = etf_names.get(name, name)
+            lines.append(f'<th>{label}</th>')
+        lines.append('</tr>')
+        for name1 in sorted(corr.keys()):
+            label1 = etf_names.get(name1, name1)
+            lines.append(f'<tr><td><strong>{label1}</strong></td>')
+            for name2 in sorted(corr.keys()):
+                v = corr[name1].get(name2, 0)
+                if name1 == name2:
+                    lines.append('<td style="color:#ccc;">1.0</td>')
+                else:
+                    if v < -0.3:
+                        c = f"color:#27ae60;"  # 负相关=好的对冲
+                    elif v > 0.7:
+                        c = f"color:#e74c3c;"  # 高相关=同涨同跌
+                    elif v < 0.1:
+                        c = f"color:#2980b9;"  # 低相关=好的分散
+                    else:
+                        c = ""
+                    lines.append(f'<td style="{c}">{v:+.2f}</td>')
+            lines.append('</tr>')
+        lines.append('</table>')
+        lines.append('''<div style="font-size:10px;color:#999;margin-top:3px;">
+            <span style="color:#27ae60;">■</span>负相关(对冲) 
+            <span style="color:#2980b9;">■</span>低相关(分散) 
+            <span style="color:#e74c3c;">■</span>高相关(同步)
+        </div>''')
+
+    return "\n".join(lines)
+
+
 def holdings_overview():
     """持仓概览卡片 - 突出显示5个核心指标"""
     if not HOLDING_CONFIG:
@@ -381,6 +480,11 @@ html_content = f"""
                 <div style="font-size: 11px; color: #999; margin-top: 5px;">ADX+MACD柱>0为更保守的入场确认，回测Sharpe 0.73</div>
             </div>
         </details>
+    </div>
+
+    <div class="section">
+        <h2>舆情/宏观辅助参考</h2>
+        {generate_sentiment_panel()}
     </div>
 
     <div class="section">

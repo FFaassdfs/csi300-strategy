@@ -99,6 +99,9 @@ run([sys.executable, '-c',
 print('  更新510310 ETF...')
 run([sys.executable, 'update_etf_510310.py'])
 
+print('  采集舆情/宏观数据...')
+run([sys.executable, 'sentiment_collector.py'], capture_output=True)
+
 # ============ 3. 生成报告 ============
 print()
 print('=' * 50)
