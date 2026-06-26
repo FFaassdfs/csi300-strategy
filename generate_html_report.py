@@ -8,8 +8,10 @@ from datetime import datetime
 import duckdb
 import csv
 import json
+import sys
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, PROJECT_ROOT)
 
 # ========== 读取舆情数据 ==========
 SENTIMENT_FILE = os.path.join(PROJECT_ROOT, 'reports', 'sentiment_data.json')
@@ -20,6 +22,14 @@ if os.path.exists(SENTIMENT_FILE):
             sentiment = json.load(f)
     except Exception:
         pass
+
+# ========== 双品种轮动信号 ==========
+dual_signals = {}
+try:
+    from dual_rotation import get_dual_signals
+    dual_signals = get_dual_signals()
+except Exception:
+    pass
 
 # ========== 读取交易记录计算持仓 ==========
 trades_file = os.path.join(PROJECT_ROOT, 'trades', '510310_trades.csv')
@@ -199,6 +209,66 @@ report_date = datetime.now().strftime('%Y-%m-%d')
 index_date = last_date.strftime('%Y-%m-%d')
 
 # ========== HTML内容生成 ==========
+def generate_dual_signal_panel():
+    """双品种轮动信号面板"""
+    if not dual_signals:
+        return ''
+
+    lines = ['<div style="margin-top:15px;background:#f0f4ff;border:2px solid #2980b9;border-radius:10px;padding:15px;">']
+    lines.append('<div style="font-weight:bold;font-size:15px;color:#1a1a2e;margin-bottom:10px;">双品种轮动信号 <span style="font-size:11px;color:#999;font-weight:normal;">(下周一起执行)</span></div>')
+    lines.append('<table style="font-size:13px;">')
+    lines.append('<tr><th>品种</th><th>价格</th><th>MA50</th><th>波动率</th><th>ADX</th><th>信号</th></tr>')
+
+    for code in ['510310', '159995']:
+        s = dual_signals.get(code)
+        if s is None:
+            continue
+        sig = '持有' if s['signal'] == 1 else '空仓'
+        sig_color = '#27ae60' if s['signal'] == 1 else '#e74c3c'
+        adx_color = '#27ae60' if s['adx'] > 25 else '#e67e22' if s['adx'] > 20 else '#999'
+        vol_color = '#e74c3c' if s['vol'] > 15 else '#27ae60'
+        lines.append(f'<tr>'
+            f'<td><strong>{s["name"]}</strong></td>'
+            f'<td>{s["price"]:.4f}</td>'
+            f'<td>{s["ma50"]:.4f}</td>'
+            f'<td style="color:{vol_color};">{s["vol"]:.1f}%</td>'
+            f'<td style="color:{adx_color};">{s["adx"]:.1f}</td>'
+            f'<td><span style="font-weight:bold;color:{sig_color};">{sig}</span></td>'
+            f'</tr>')
+
+    lines.append('</table>')
+
+    # 轮动建议
+    s310 = dual_signals.get('510310', {})
+    s995 = dual_signals.get('159995', {})
+    if s310.get('signal') == 1 and s995.get('signal') == 1:
+        chosen = '510310' if s310.get('adx', 0) >= s995.get('adx', 0) else '159995'
+        reason = '两者皆可持有，选ADX更强的一方'
+    elif s310.get('signal') == 1:
+        chosen = '510310'
+        reason = '仅沪深300符合条件'
+    elif s995.get('signal') == 1:
+        chosen = '159995'
+        reason = '仅芯片ETF符合条件'
+    else:
+        chosen = '国债/逆回购'
+        reason = '两个品种都不符合买入条件'
+
+    chosen_name = '国债/逆回购'
+    if chosen == '510310':
+        chosen_name = '沪深300ETF'
+    elif chosen == '159995':
+        chosen_name = '芯片ETF'
+
+    lines.append(f'<div style="margin-top:10px;padding:8px 12px;background:white;border-radius:6px;font-size:14px;">')
+    lines.append(f'<strong>轮动指向:</strong> <span style="font-size:16px;color:#1a1a2e;">{chosen_name}</span>')
+    lines.append(f'<span style="color:#666;margin-left:10px;">({reason})</span>')
+    lines.append('</div>')
+
+    lines.append('</div>')
+    return '\n'.join(lines)
+
+
 def generate_sentiment_panel():
     """生成舆情面板HTML"""
     if not sentiment:
@@ -460,6 +530,8 @@ html_content = f"""
                 价格 &gt; MA50 AND (波动率 &lt; 15% OR ADX &gt; 25)
             </div>
         </div>
+
+        {generate_dual_signal_panel()}
 
         <details style="margin-top: 15px;">
             <summary style="cursor: pointer; color: #666; font-size: 13px;">辅助参考信号（观察，不执行）</summary>
