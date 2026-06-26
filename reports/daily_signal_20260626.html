@@ -1,0 +1,323 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CSI300 策略信号报告 2026-06-26</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; color: #333; }
+        .header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: white; padding: 25px; border-radius: 10px; margin-bottom: 20px; }
+        .header h1 { margin: 0 0 10px 0; font-size: 24px; }
+        .header .subtitle { opacity: 0.8; font-size: 14px; }
+        .section { background: white; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .section h2 { margin-top: 0; color: #1a1a2e; font-size: 18px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .indicator-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 15px; }
+        .indicator { background: #f8f9fa; padding: 15px; border-radius: 8px; text-align: center; }
+        .indicator .label { font-size: 12px; color: #666; margin-bottom: 5px; }
+        .indicator .value { font-size: 20px; font-weight: bold; color: #1a1a2e; }
+        .indicator .value.warning { color: #e67e22; }
+        .indicator .value.success { color: #27ae60; }
+        .indicator .value.danger { color: #e74c3c; }
+        .strategy-card { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #ccc; }
+        .strategy-card.adx { border-left-color: #27ae60; }
+        .strategy-card.momentum { border-left-color: #3498db; }
+        .strategy-card.absolute { border-left-color: #95a5a6; }
+        .strategy-card .name { font-weight: bold; font-size: 16px; margin-bottom: 8px; }
+        .signal { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+        .signal.csi300 { background: #27ae60; color: white; }
+        .signal.bond { background: #e74c3c; color: white; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        .holding-table th, .holding-table td { text-align: right; }
+        .holding-table th { text-align: left; }
+        .holding-table .fund-name { text-align: left; font-weight: 600; }
+        .holding-table .nav { font-size: 12px; color: #666; }
+        .holding-table .total-row { font-weight: bold; background: #f8f9fa; }
+        .recommendation { background: linear-gradient(135deg, #f39c12, #e67e22); color: white; padding: 25px; border-radius: 10px; text-align: center; }
+        .recommendation h3 { margin: 0 0 15px 0; font-size: 18px; }
+        .recommendation .action { font-size: 28px; font-weight: bold; margin: 15px 0; }
+        .recommendation .note { font-size: 14px; opacity: 0.9; }
+        .info-box { background: #e8f4f8; border: 1px solid #b8d4e3; border-radius: 8px; padding: 15px; margin-top: 15px; }
+        .info-box .title { font-weight: bold; color: #2980b9; margin-bottom: 5px; }
+        .footer { text-align: center; font-size: 12px; color: #999; margin-top: 20px; }
+        .overview-container { margin-bottom: 15px; }
+        .overview-card { background: linear-gradient(135deg, #f8f9fa, #e8f4f8); border: 2px solid #2980b9; border-radius: 10px; padding: 20px; margin-bottom: 15px; }
+        .overview-title { font-size: 18px; font-weight: bold; color: #1a1a2e; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #b8d4e3; }
+        .overview-metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+        .metric { background: white; padding: 12px; border-radius: 8px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .metric-label { font-size: 12px; color: #666; margin-bottom: 6px; }
+        .metric-value { font-size: 16px; font-weight: bold; color: #1a1a2e; }
+        .metric-pnl { background: #fff8e1; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>CSI300 趋势跟踪策略报告</h1>
+        <div class="subtitle">报告生成: 2026-06-26 | 指数数据: 2026-06-25</div>
+    </div>
+
+    <div class="section">
+        <h2>市场状态指标（沪深300指数）</h2>
+        <div class="indicator-grid">
+            <div class="indicator">
+                <div class="label">沪深300指数</div>
+                <div class="value">5020.10</div>
+            </div>
+            <div class="indicator">
+                <div class="label">MA50均线</div>
+                <div class="value">4847.42</div>
+            </div>
+            <div class="indicator">
+                <div class="label">20日波动率</div>
+                <div class="value warning">23.23%</div>
+            </div>
+            <div class="indicator">
+                <div class="label">ADX趋势强度</div>
+                <div class="value ">24.26</div>
+            </div>
+        </div>
+        <table>
+            <tr>
+                <td><strong>价格 vs MA50:</strong></td>
+                <td><strong>✅ 在均线上方</strong></td>
+                <td><strong>20日动量:</strong></td>
+                <td>+2.28%</td>
+            </tr>
+            <tr>
+                <td><strong>波动率 vs 15%:</strong></td>
+                <td>⚠️ 偏高</td>
+                <td><strong>趋势确认:</strong></td>
+                <td>❌ 否</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>主策略信号: ADX Override</h2>
+
+        <div class="strategy-card adx" style="border-left-width: 6px; padding: 20px;">
+            <div class="name" style="font-size: 18px;">ADX Override <span style="font-size:13px;color:#1a1a2e;font-weight:bold;">← 主交易信号</span></div>
+            <div style="margin-top: 10px;">
+                <span class="signal bond">持有国债</span>
+                <span style="margin-left: 15px; color: #666;">触发: 高波动/低趋势</span>
+            </div>
+            <div style="font-size: 12px; color: #666; margin-top: 8px;">
+                价格 &gt; MA50 AND (波动率 &lt; 15% OR ADX &gt; 25)
+            </div>
+        </div>
+
+        <details style="margin-top: 15px;">
+            <summary style="cursor: pointer; color: #666; font-size: 13px;">辅助参考信号（观察，不执行）</summary>
+            <div class="strategy-card" style="margin-top: 10px; border-left-color: #bbb;">
+                <div class="name">布林带极端超卖 <span style="font-size:11px;color:#999;font-weight:normal;">— %B < 0.2</span></div>
+                <div style="margin-top: 5px;">
+                    <span class="signal" style="background: #bbb; color: white;">正常区间</span>
+                    <span style="margin-left: 10px; color: #999;">%B = 0.88</span>
+                </div>
+                <div style="font-size: 11px; color: #999; margin-top: 5px;">%B<0.2 且价格>MA50时表示极端超卖，历史回撤仅-1.15%</div>
+            </div>
+            <div class="strategy-card" style="margin-top: 8px; border-left-color: #27ae60;">
+                <div class="name">保守信号确认 <span style="font-size:11px;color:#999;font-weight:normal;">— ADX + MACD柱>0</span></div>
+                <div style="margin-top: 5px;">
+                    <span class="signal" style="background: #27ae60; color: white;">与主信号一致</span>
+                    <span style="margin-left: 10px; color: #999;">MACD柱 = +15.44</span>
+                </div>
+                <div style="font-size: 11px; color: #999; margin-top: 5px;">ADX+MACD柱>0为更保守的入场确认，回测Sharpe 0.73</div>
+            </div>
+        </details>
+    </div>
+
+    <div class="section">
+        <h2>舆情/宏观辅助参考</h2>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
+<div style="background:#f8f9fa;padding:12px;border-radius:8px;">
+        <strong>北向资金</strong> <span style="font-size:11px;color:#999;">N/A</span><br>
+        <span style="font-size:20px;font-weight:bold;color:#e74c3c;">+0.0亿</span>
+        <span style="color:#e74c3c;">未知</span>
+    </div>
+<div style="background:#f8f9fa;padding:12px;border-radius:8px;">
+        <strong>QVIX恐慌指数</strong> <span style="font-size:11px;color:#999;">2026-06-25</span><br>
+        <span style="font-size:20px;font-weight:bold;color:#e67e22;">21.6</span>
+        <span style="font-size:12px;color:#666;">(-1.1)</span>
+        <span style="color:#e67e22;">偏高</span>
+    </div>
+<div style="background:#f8f9fa;padding:12px;border-radius:8px;">
+        <strong>主力资金</strong> <span style="font-size:11px;color:#999;">2026-06-25</span><br>
+        <span style="font-size:20px;font-weight:bold;color:#e74c3c;">-214.4亿</span>
+        <span style="color:#e74c3c;">流出</span>
+    </div>
+</div>
+<div style="margin-top:15px;"><strong>多品种相关性 (2年日收益)</strong></div>
+<table style="font-size:11px;margin-top:5px;"><tr><th></th>
+<th>创业板</th>
+<th>芯片</th>
+<th>上证50</th>
+<th>510300</th>
+<th>沪深300</th>
+<th>国债</th>
+</tr>
+<tr><td><strong>创业板</strong></td>
+<td style="color:#ccc;">1.0</td>
+<td style="">+0.66</td>
+<td style="color:#e74c3c;">+0.71</td>
+<td style="color:#e74c3c;">+0.89</td>
+<td style="">+0.22</td>
+<td style="color:#2980b9;">-0.28</td>
+</tr>
+<tr><td><strong>芯片</strong></td>
+<td style="">+0.66</td>
+<td style="color:#ccc;">1.0</td>
+<td style="">+0.51</td>
+<td style="">+0.62</td>
+<td style="">+0.14</td>
+<td style="color:#2980b9;">-0.22</td>
+</tr>
+<tr><td><strong>上证50</strong></td>
+<td style="color:#e74c3c;">+0.71</td>
+<td style="">+0.51</td>
+<td style="color:#ccc;">1.0</td>
+<td style="color:#e74c3c;">+0.92</td>
+<td style="">+0.25</td>
+<td style="color:#2980b9;">-0.28</td>
+</tr>
+<tr><td><strong>510300</strong></td>
+<td style="color:#e74c3c;">+0.89</td>
+<td style="">+0.62</td>
+<td style="color:#e74c3c;">+0.92</td>
+<td style="color:#ccc;">1.0</td>
+<td style="">+0.27</td>
+<td style="color:#2980b9;">-0.29</td>
+</tr>
+<tr><td><strong>沪深300</strong></td>
+<td style="">+0.22</td>
+<td style="">+0.14</td>
+<td style="">+0.25</td>
+<td style="">+0.27</td>
+<td style="color:#ccc;">1.0</td>
+<td style="color:#2980b9;">-0.07</td>
+</tr>
+<tr><td><strong>国债</strong></td>
+<td style="color:#2980b9;">-0.28</td>
+<td style="color:#2980b9;">-0.22</td>
+<td style="color:#2980b9;">-0.28</td>
+<td style="color:#2980b9;">-0.29</td>
+<td style="color:#2980b9;">-0.07</td>
+<td style="color:#ccc;">1.0</td>
+</tr>
+</table>
+<div style="font-size:10px;color:#999;margin-top:3px;">
+            <span style="color:#27ae60;">■</span>负相关(对冲) 
+            <span style="color:#2980b9;">■</span>低相关(分散) 
+            <span style="color:#e74c3c;">■</span>高相关(同步)
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>当前持仓（场内ETF）</h2>
+        
+        <table class="holding-table">
+            <thead>
+                <tr>
+                    <th>基金名称</th>
+                    <th>最新净值</th>
+                    <th>持有金额</th>
+                    <th>估算份额</th>
+                    <th>占比</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+                <tr class="total-row">
+                    <td class="fund-name"><strong>合计</strong></td>
+                    <td>-</td>
+                    <td><strong>¥0.00</strong></td>
+                    <td>-</td>
+                    <td>100%</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>交易建议</h2>
+        <div class="recommendation">
+            <h3>明日操作建议</h3>
+
+            <div class="action">🔴 转换为国债避险</div>
+            <div class="note">ADX Override 主策略看空</div>
+
+        </div>
+        <div class="info-box" style="margin-top: 15px;">
+            <div class="title">资金状况</div>
+            <div style="display: flex; justify-content: space-between; margin-top: 8px;">
+                <div>总资金: ¥10,000.00</div>
+                <div>已持仓: ¥0.00 (0.0%)</div>
+                <div>可用: ¥10,000.00</div>
+            </div>
+        </div>
+
+        <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 15px; margin-top: 15px;">
+            <div style="font-weight: bold; color: #856404; margin-bottom: 8px;">⚠️ 风险提示</div>
+            <div style="color: #856404; font-size: 13px; margin-top: 4px;">• 波动率 23.23% 略高于 15% 阈值，需谨慎操作</div>
+            <div style="color: #856404; font-size: 13px; margin-top: 4px;">• 建议保留约 ¥850 现金作为缓冲</div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>策略对比（真实回测 2022-08 ~ 2026-06，约3.6年）</h2>
+        <table>
+            <tr>
+                <th>策略</th>
+                <th>年化收益</th>
+                <th>Sharpe</th>
+                <th>最大回撤</th>
+                <th>持仓比例</th>
+                <th>用途</th>
+            </tr>
+            <tr>
+                <td><strong>ADX Override</strong></td>
+                <td style="color: #27ae60;"><strong>+11.49%</strong></td>
+                <td style="color: #27ae60;"><strong>0.77</strong></td>
+                <td>-10.99%</td>
+                <td>39.3%</td>
+                <td style="color: #1a1a2e;"><strong>主策略</strong></td>
+            </tr>
+            <tr>
+                <td>ADX + MACD柱>0</td>
+                <td>+9.84%</td>
+                <td>0.73</td>
+                <td>-12.33%</td>
+                <td>22.3%</td>
+                <td style="color: #666;">保守确认</td>
+            </tr>
+            <tr>
+                <td>RSI>40 + MA50</td>
+                <td>+11.71%</td>
+                <td>0.73</td>
+                <td>-10.99%</td>
+                <td>51.3%</td>
+                <td style="color: #666;">简化参考</td>
+            </tr>
+            <tr>
+                <td>BB下轨 + MA50</td>
+                <td>+4.07%</td>
+                <td>0.71</td>
+                <td style="color: #27ae60;">-1.15%</td>
+                <td>2.0%</td>
+                <td style="color: #666;">抄底辅助</td>
+            </tr>
+            <tr>
+                <td>Buy&Hold (基准)</td>
+                <td>+4.86%</td>
+                <td>--</td>
+                <td style="color: #e74c3c;">-24.80%</td>
+                <td>100%</td>
+                <td style="color: #999;">被动持有</td>
+            </tr>
+        </table>
+        <div style="margin-top: 10px; font-size: 12px; color: #666;">
+            * Wilder标准ADX算法，回测24个月周期，上证指数筛选，全市场验证<br>
+            * 所有策略最大回撤 -24.8% 附近，因此 ADX Override 为执行策略，其余为观察
+        </div>
+    </div>
