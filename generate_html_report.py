@@ -23,11 +23,11 @@ if os.path.exists(SENTIMENT_FILE):
     except Exception:
         pass
 
-# ========== 双品种轮动信号 ==========
+# ========== 多品种轮动信号 ==========
 dual_signals = {}
 try:
-    from dual_rotation import get_dual_signals
-    dual_signals = get_dual_signals()
+    from dual_rotation import get_rotation_signals
+    dual_signals = get_rotation_signals()
 except Exception:
     pass
 
@@ -210,17 +210,18 @@ index_date = last_date.strftime('%Y-%m-%d')
 
 # ========== HTML内容生成 ==========
 def generate_dual_signal_panel():
-    """双品种轮动信号面板"""
+    """多品种轮动信号面板"""
     if not dual_signals:
         return ''
 
     lines = ['<div style="margin-top:15px;background:#f0f4ff;border:2px solid #2980b9;border-radius:10px;padding:15px;">']
-    lines.append('<div style="font-weight:bold;font-size:15px;color:#1a1a2e;margin-bottom:10px;">双品种轮动信号 <span style="font-size:11px;color:#999;font-weight:normal;">(下周一起执行)</span></div>')
+    lines.append('<div style="font-weight:bold;font-size:15px;color:#1a1a2e;margin-bottom:10px;">多品种轮动信号 <span style="font-size:11px;color:#999;font-weight:normal;">(510310+159995+512660)</span></div>')
     lines.append('<table style="font-size:13px;">')
     lines.append('<tr><th>品种</th><th>价格</th><th>MA50</th><th>波动率</th><th>ADX</th><th>信号</th></tr>')
 
-    for code in ['510310', '159995']:
-        s = dual_signals.get(code)
+    asset_order = ['510310', '159995', '512660']
+    for code in asset_order:
+        s = dual_signals.get('assets', {}).get(code)
         if s is None:
             continue
         sig = '持有' if s['signal'] == 1 else '空仓'
@@ -238,27 +239,27 @@ def generate_dual_signal_panel():
 
     lines.append('</table>')
 
-    # 轮动建议
-    s310 = dual_signals.get('510310', {})
-    s995 = dual_signals.get('159995', {})
-    if s310.get('signal') == 1 and s995.get('signal') == 1:
-        chosen = '510310' if s310.get('adx', 0) >= s995.get('adx', 0) else '159995'
-        reason = '两者皆可持有，选ADX更强的一方'
-    elif s310.get('signal') == 1:
-        chosen = '510310'
-        reason = '仅沪深300符合条件'
-    elif s995.get('signal') == 1:
-        chosen = '159995'
-        reason = '仅芯片ETF符合条件'
+    # 轮动建议 (三品种)
+    candidates = []
+    for code in ['510310', '159995', '512660']:
+        s = dual_signals.get('assets', {}).get(code, {})
+        if s.get('signal') == 1:
+            candidates.append((code, s.get('adx', 0), s.get('name', code)))
+    
+    if len(candidates) > 1:
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        chosen = candidates[0][0]
+        names = [c[2] for c in candidates]
+        reason = f'{"/".join(names)}皆可，选ADX最强的'
+    elif len(candidates) == 1:
+        chosen = candidates[0][0]
+        reason = f'仅{candidates[0][2]}符合条件'
     else:
-        chosen = '国债/逆回购'
-        reason = '两个品种都不符合买入条件'
+        chosen = 'BOND'
+        reason = '所有品种都不符合买入条件'
 
-    chosen_name = '国债/逆回购'
-    if chosen == '510310':
-        chosen_name = '沪深300ETF'
-    elif chosen == '159995':
-        chosen_name = '芯片ETF'
+    chosen_map = {'510310': '沪深300ETF', '159995': '芯片ETF', '512660': '军工ETF', 'BOND': '国债/逆回购'}
+    chosen_name = chosen_map.get(chosen, '国债/逆回购')
 
     lines.append(f'<div style="margin-top:10px;padding:8px 12px;background:white;border-radius:6px;font-size:14px;">')
     lines.append(f'<strong>轮动指向:</strong> <span style="font-size:16px;color:#1a1a2e;">{chosen_name}</span>')
