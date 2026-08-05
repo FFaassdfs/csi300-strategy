@@ -215,11 +215,11 @@ def generate_dual_signal_panel():
         return ''
 
     lines = ['<div style="margin-top:15px;background:#f0f4ff;border:2px solid #2980b9;border-radius:10px;padding:15px;">']
-    lines.append('<div style="font-weight:bold;font-size:15px;color:#1a1a2e;margin-bottom:10px;">多品种轮动信号 <span style="font-size:11px;color:#999;font-weight:normal;">(510310+159995+512660)</span></div>')
+    lines.append('<div style="font-weight:bold;font-size:15px;color:#1a1a2e;margin-bottom:10px;">多品种轮动信号 <span style="font-size:11px;color:#999;font-weight:normal;">(510310+159995)</span></div>')
     lines.append('<table style="font-size:13px;">')
     lines.append('<tr><th>品种</th><th>价格</th><th>MA50</th><th>波动率</th><th>ADX</th><th>信号</th></tr>')
 
-    asset_order = ['510310', '159995', '512660']
+    asset_order = ['510310', '159995']
     for code in asset_order:
         s = dual_signals.get('assets', {}).get(code)
         if s is None:
@@ -241,7 +241,7 @@ def generate_dual_signal_panel():
 
     # 轮动建议 (三品种)
     candidates = []
-    for code in ['510310', '159995', '512660']:
+    for code in ['510310', '159995']:
         s = dual_signals.get('assets', {}).get(code, {})
         if s.get('signal') == 1:
             candidates.append((code, s.get('adx', 0), s.get('name', code)))
@@ -258,7 +258,7 @@ def generate_dual_signal_panel():
         chosen = 'BOND'
         reason = '所有品种都不符合买入条件'
 
-    chosen_map = {'510310': '沪深300ETF', '159995': '芯片ETF', '512660': '军工ETF', 'BOND': '国债/逆回购'}
+    chosen_map = {'510310': '沪深300ETF', '159995': '芯片ETF', 'BOND': '国债/逆回购'}
     chosen_name = chosen_map.get(chosen, '国债/逆回购')
 
     lines.append(f'<div style="margin-top:10px;padding:8px 12px;background:white;border-radius:6px;font-size:14px;">')

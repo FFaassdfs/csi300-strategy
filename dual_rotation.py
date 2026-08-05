@@ -14,9 +14,8 @@ DB_PATH = os.path.join(PROJECT_ROOT, 'csi300_data.duckdb')
 RF = 0.025
 
 ASSETS = {
-    '510310': {'name': '沪深300ETF', 'code': 'sh510310'},
-    '159995': {'name': '芯片ETF',    'code': 'sz159995'},
-    '512660': {'name': '军工ETF',    'code': 'sh512660'},
+    '510310': {'name': '沪深300ETF', 'code': 'sh510310', 'ma_p': 30, 'adx_th': 20, 'vol_th': 18},
+    '159995': {'name': '芯片ETF',    'code': 'sz159995', 'ma_p': 30, 'adx_th': 25, 'vol_th': 15},
 }
 
 def ensure_all_data():
@@ -58,33 +57,34 @@ def ensure_all_data():
             print(f'  下载失败: {e}')
 
 
-def compute_adx_signal(df):
-    """对单个ETF计算ADX Override信号"""
+def compute_adx_signal(df, ma_p=30, adx_p=14, vol_p=20, vol_th=18, adx_th=20):
+    """对单个ETF计算ADX Override信号 (参数可配置)"""
     close = df['close']
     high = df['high']
     low = df['low']
-    ma50 = close.rolling(50).mean()
-    vol = close.pct_change().rolling(20).std() * np.sqrt(252) * 100
+    ma = close.rolling(ma_p).mean()
+    vol = close.pct_change().rolling(vol_p).std() * np.sqrt(252) * 100
     tr1 = high - low
     tr2 = abs(high - close.shift(1))
     tr3 = abs(low - close.shift(1))
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr14 = tr.ewm(alpha=1/14, adjust=False).mean()
+    atr = tr.ewm(alpha=1/adx_p, adjust=False).mean()
     up = high.diff(); dn = -low.diff()
     p_dm = pd.Series(0.0, index=df.index); n_dm = pd.Series(0.0, index=df.index)
     p_dm.loc[(up > dn) & (up > 0)] = up
     n_dm.loc[(dn > up) & (dn > 0)] = dn
-    pdi = 100 * p_dm.ewm(alpha=1/14, adjust=False).mean() / atr14
-    ndi = 100 * n_dm.ewm(alpha=1/14, adjust=False).mean() / atr14
-    adx = (100 * abs(pdi - ndi) / (pdi + ndi + 1e-10)).ewm(alpha=1/14, adjust=False).mean()
-    above = close > ma50
-    low_vol = vol < 15
-    trend = adx > 25
+    pdi = 100 * p_dm.ewm(alpha=1/adx_p, adjust=False).mean() / atr
+    ndi = 100 * n_dm.ewm(alpha=1/adx_p, adjust=False).mean() / atr
+    adx = (100 * abs(pdi - ndi) / (pdi + ndi + 1e-10)).ewm(alpha=1/adx_p, adjust=False).mean()
+    above = close > ma
+    low_vol = vol < vol_th
+    trend = adx > adx_th
     signal = (above & (low_vol | trend)).astype(int)
     return {
-        'close': close, 'ma50': ma50, 'vol': vol, 'adx': adx, 'signal': signal,
-        'last_close': close.iloc[-1], 'last_ma50': ma50.iloc[-1],
+        'close': close, 'ma50': ma, 'vol': vol, 'adx': adx, 'signal': signal,
+        'last_close': close.iloc[-1], 'last_ma50': ma.iloc[-1],
         'last_vol': vol.iloc[-1], 'last_adx': adx.iloc[-1],
+        'ma_p': ma_p, 'adx_th': adx_th, 'vol_th': vol_th,
     }
 
 
@@ -99,7 +99,7 @@ def get_rotation_signals():
         try:
             df = conn.execute(f'SELECT date, open, high, low, close FROM {tbl} ORDER BY date').fetchdf()
             df['date'] = pd.to_datetime(df['date'])
-            r = compute_adx_signal(df)
+            r = compute_adx_signal(df, ma_p=info.get('ma_p', 30), adx_th=info.get('adx_th', 20), vol_th=info.get('vol_th', 18))
             results[asset_id] = {
                 'name': info['name'],
                 'price': r['last_close'],

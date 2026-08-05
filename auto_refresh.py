@@ -18,9 +18,9 @@ WORK_DB = os.path.join(PROJECT_ROOT, 'csi300_data.duckdb')
 RF = 0.025
 
 ASSETS = {
-    '510310': {'name': '沪深300ETF', 'code': 'sh510310'},
-    '159995': {'name': '芯片ETF',    'code': 'sz159995'},
-    '512660': {'name': '军工ETF',    'code': 'sh512660'},
+    '510310': {'name': '沪深300ETF', 'code': 'sh510310', 'ma_p': 30, 'adx_th': 20, 'vol_th': 18},
+    '159995': {'name': '芯片ETF',    'code': 'sz159995', 'ma_p': 30, 'adx_th': 25, 'vol_th': 15},
+    '512660': {'name': '军工ETF',    'code': 'sh512660', 'ma_p': 30, 'adx_th': 20, 'vol_th': 15, 'monitor_only': True},
 }
 
 YEARS = 5
@@ -105,7 +105,11 @@ def compute_and_log_signals(conn):
             continue
 
         c = df['close']; h = df['high']; l = df['low']
-        ma50 = c.rolling(50).mean()
+        ma_p = info.get('ma_p', 30)
+        adx_th = info.get('adx_th', 20)
+        vol_th = info.get('vol_th', 18)
+
+        ma50 = c.rolling(ma_p).mean()
         vol = c.pct_change().rolling(20).std() * np.sqrt(252) * 100
         momentum = c / c.shift(20) - 1
 
@@ -127,8 +131,8 @@ def compute_and_log_signals(conn):
         bb_pct_b = (c - (bb_mid - 2*bb_std)) / ((bb_mid + 2*bb_std) - (bb_mid - 2*bb_std) + 1e-10)
 
         above_ma50 = (c > ma50).astype(int)
-        low_vol = (vol < 15).astype(int)
-        strong_trend = (adx > 25).astype(int)
+        low_vol = (vol < vol_th).astype(int)
+        strong_trend = (adx > adx_th).astype(int)
         signal = (above_ma50 & (low_vol | strong_trend)).astype(int)
 
         # 最新值
