@@ -344,7 +344,16 @@ def main():
 
     picks = [c for c in ORDER if c in signals and signals[c]['signal'] == 1]
     if picks:
-        subject = f'[{today} {time_label}] 策略: 买入 {ASSETS[picks[0]]["name"]}'
+        # 按置信度排序, 取最强信号决定标题 (与正文建议一致)
+        picks.sort(key=lambda c: signals[c]['conf']['score'], reverse=True)
+        top = picks[0]
+        conf_level = signals[top]['conf']['level']
+        if conf_level == '强':
+            subject = f'[{today} {time_label}] 策略: 买入 {ASSETS[top]["name"]}'
+        elif conf_level == '中':
+            subject = f'[{today} {time_label}] 策略: 关注 {ASSETS[top]["name"]} (中等信号)'
+        else:
+            subject = f'[{today} {time_label}] 策略: 观望 ({ASSETS[top]["name"]}弱信号待确认)'
     else:
         subject = f'[{today} {time_label}] 策略: 空仓观望'
 
