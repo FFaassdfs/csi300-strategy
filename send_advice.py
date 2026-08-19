@@ -1,13 +1,13 @@
 """
-收盘策略邮件推送
-每天15:10刷新数据后, 自动生成操作建议并发送邮件
+策略邮件推送 v2 (整合版)
+午间(mid): 上午收盘后分析 + 下午操作建议
+收盘(close): 全天分析 + 次日操作建议
 
-配置: 修改下面 SMTP_CONFIG 中的授权码 (163邮箱设置→客户端授权密码)
+统一信号计算逻辑: 午间用实时价, 收盘用已入库收盘价, 计算方式完全一致
 """
 import os
 import sys
 import smtplib
-import subprocess
 from email.mime.text import MIMEText
 from email.header import Header
 from datetime import datetime
@@ -15,72 +15,41 @@ from datetime import datetime
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
-# ========== 邮件配置 (用户修改) ==========
+# ========== 邮件配置 ==========
 SMTP_CONFIG = {
-    'sender': 'aassdfs@163.com',          # 发件邮箱
-    'auth_code': 'CFNyDY5dEPJu6Y5U',      # 163邮箱授权码
-    'to': 'aassdfs@qq.com',               # 收件邮箱 (QQ邮箱)
+    'sender': 'aassdfs@163.com',
+    'auth_code': 'CFNyDY5dEPJu6Y5U',
+    'to': 'aassdfs@qq.com',
     'smtp_server': 'smtp.163.com',
-    'smtp_port': 465,                     # SSL
+    'smtp_port': 465,
 }
 
-# ========== 品种配置 (与轮动一致) ==========
+# ========== 品种配置 (唯一权威, 与轮动一致) ==========
 ASSETS = {
     '510310': {'name': '沪深300ETF', 'code': 'sh510310', 'ma_p': 30, 'adx_th': 20, 'vol_th': 18},
     '159995': {'name': '芯片ETF',    'code': 'sz159995', 'ma_p': 30, 'adx_th': 25, 'vol_th': 15},
     '512800': {'name': '银行ETF',    'code': 'sh512800', 'ma_p': 30, 'adx_th': 25, 'vol_th': 18},
 }
 
+ORDER = ['510310', '159995', '512800']
 
-def get_latest_signals(mode='close'):
+
+# ========== 统一信号计算 ==========
+def compute_signals(prices):
     """
-    获取最新信号
-    mode=close: 用历史库最新收盘信号
-    mode=mid: 用实时行情计算盘中信号
+    计算三品种信号 (统一逻辑)
+    prices: {code: 最新价}
+    返回: {code: {name, price, ma, adx, vol, above_ma, low_vol, trend, signal, reason}}
     """
-    import duckdb
-
-    if mode == 'mid':
-        return get_midday_signals()
-
-    conn = duckdb.connect(os.path.join(PROJECT_ROOT, 'trading_history.duckdb'))
-
-    signals = {}
-    for code, info in ASSETS.items():
-        try:
-            row = conn.execute(
-                "SELECT date, price, signal, reason FROM signals_log "
-                "WHERE code=? ORDER BY date DESC LIMIT 1", [code]
-            ).fetchone()
-            if row:
-                signals[code] = {'name': info['name'], 'date': str(row[0]),
-                                 'price': row[1], 'signal': row[2], 'reason': row[3]}
-        except Exception:
-            pass
-    conn.close()
-    return signals
-
-
-def get_midday_signals():
-    """午间信号: 用实时行情+历史数据计算"""
-    import requests
-    import numpy as np
     import duckdb
     import pandas as pd
+    import numpy as np
 
-    headers = {"Referer": "https://finance.sina.com.cn"}
     conn = duckdb.connect(os.path.join(PROJECT_ROOT, 'trading_history.duckdb'))
-    signals = {}
+    results = {}
 
     for code, info in ASSETS.items():
         try:
-            # 实时价
-            r = requests.get(f"https://hq.sinajs.cn/list={info['code']}", headers=headers, timeout=8)
-            r.encoding = "gbk"
-            p = r.text.strip().split('"')[1].split(",")
-            px = float(p[3]) if p[3] != "0.000" else float(p[2])
-
-            # 历史数据
             df = conn.execute(
                 f"SELECT date, open, high, low, close FROM daily_ohlc WHERE code='{code}' ORDER BY date"
             ).fetchdf()
@@ -89,7 +58,8 @@ def get_midday_signals():
             h = df['high'].astype(float)
             l = df['low'].astype(float)
 
-            # 追加实时价
+            # 追加最新价 (午间=实时价, 收盘=收盘价)
+            px = prices[code]
             c = pd.concat([c, pd.Series([px])]).reset_index(drop=True)
             h = pd.concat([h, pd.Series([px])]).reset_index(drop=True)
             l = pd.concat([l, pd.Series([px])]).reset_index(drop=True)
@@ -107,10 +77,13 @@ def get_midday_signals():
             ndi = 100 * ndm.ewm(alpha=1/14, adjust=False).mean() / atr
             adx = (100 * abs(pdi - ndi) / (pdi + ndi + 1e-10)).ewm(alpha=1/14, adjust=False).mean()
 
-            above = c.iloc[-1] > ma.iloc[-1]
-            low_vol = vol.iloc[-1] < vol_th
-            trend = adx.iloc[-1] > adx_th
+            above = bool(c.iloc[-1] > ma.iloc[-1])
+            low_vol = bool(vol.iloc[-1] < vol_th)
+            trend = bool(adx.iloc[-1] > adx_th)
             sig = 1 if (above and (low_vol or trend)) else 0
+
+            # 置信度
+            conf = compute_confidence(px, ma.iloc[-1], adx.iloc[-1], vol.iloc[-1], info)
 
             reason = ''
             if sig == 1:
@@ -118,13 +91,83 @@ def get_midday_signals():
             else:
                 reason = '价格<MA' if not above else '高波动+低趋势'
 
-            signals[code] = {'name': info['name'], 'date': '盘中',
-                             'price': px, 'signal': sig, 'reason': reason}
+            results[code] = {
+                'name': info['name'], 'price': px,
+                'ma': round(float(ma.iloc[-1]), 4),
+                'adx': round(float(adx.iloc[-1]), 1),
+                'vol': round(float(vol.iloc[-1]), 1),
+                'above_ma': above, 'low_vol': low_vol, 'trend': trend,
+                'signal': sig, 'reason': reason,
+                'conf': conf,
+            }
         except Exception:
             pass
 
     conn.close()
-    return signals
+    return results
+
+
+def compute_confidence(price, ma, adx, vol, info):
+    """信号置信度 (0-100)"""
+    score = 0
+    dist = (price / ma - 1) * 100 if ma > 0 else 0
+    if dist > 3: score += 30
+    elif dist > 1.5: score += 22
+    elif dist > 0.5: score += 12
+    else: score += 4
+
+    adx_margin = adx - info['adx_th']
+    if adx_margin > 10: score += 40
+    elif adx_margin > 5: score += 30
+    elif adx_margin > 0: score += 18
+    elif adx_margin > -5: score += 8
+    else: score += 2
+
+    vol_margin = info['vol_th'] - vol
+    if vol_margin > 5: score += 30
+    elif vol_margin > 2: score += 22
+    elif vol_margin > 0: score += 12
+    else: score += 4
+
+    if score >= 75: level = '强'
+    elif score >= 50: level = '中'
+    else: level = '弱'
+    return {'score': score, 'level': level}
+
+
+def get_prices_from_history():
+    """收盘模式: 从历史库取最新收盘价 (与午间同一计算逻辑)"""
+    import duckdb
+    conn = duckdb.connect(os.path.join(PROJECT_ROOT, 'trading_history.duckdb'))
+    prices = {}
+    for code in ASSETS:
+        try:
+            row = conn.execute(
+                "SELECT close FROM daily_ohlc WHERE code=? ORDER BY date DESC LIMIT 1", [code]
+            ).fetchone()
+            if row:
+                prices[code] = row[0]
+        except Exception:
+            pass
+    conn.close()
+    return prices
+
+
+def get_prices_realtime():
+    """午间模式: 新浪实时行情"""
+    import requests
+    headers = {"Referer": "https://finance.sina.com.cn"}
+    prices = {}
+    for code, info in ASSETS.items():
+        try:
+            r = requests.get(f"https://hq.sinajs.cn/list={info['code']}", headers=headers, timeout=8)
+            r.encoding = "gbk"
+            p = r.text.strip().split('"')[1].split(",")
+            px = float(p[3]) if p[3] != "0.000" else float(p[2])
+            prices[code] = px
+        except Exception:
+            pass
+    return prices
 
 
 def check_position(code):
@@ -145,53 +188,121 @@ def check_position(code):
         return 0
 
 
-def build_advice(signals):
-    """生成操作建议"""
-    picks = [c for c, s in signals.items() if s['signal'] == 1]
-    holdings = {c: check_position(c) for c in ASSETS}
+def get_qvix():
+    """获取QVIX"""
+    try:
+        import akshare as ak
+        df = ak.index_option_300etf_qvix()
+        return round(float(df.iloc[-1]['close']), 2)
+    except Exception:
+        return None
 
-    lines = []
-    lines.append(f"<h3>今日信号 ({datetime.now().strftime('%Y-%m-%d')})</h3>")
-    lines.append('<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">')
-    lines.append('<tr style="background:#f0f0f0;"><th>品种</th><th>收盘价</th><th>信号</th><th>触发理由</th><th>持仓</th></tr>')
-    for code, info in ASSETS.items():
-        s = signals.get(code)
-        if not s:
+
+# ========== 邮件正文生成 ==========
+def build_email_html(mode, signals, holdings):
+    """生成邮件HTML (午间/收盘区分)"""
+    today = datetime.now().strftime('%Y-%m-%d')
+    is_mid = (mode == 'mid')
+    title = '午间策略快报' if is_mid else '收盘策略报告'
+    sub = '上午收盘分析 + 下午操作建议' if is_mid else '全天分析 + 次日操作建议'
+
+    L = []
+    L.append(f'<h2>{title}</h2>')
+    L.append(f'<p style="color:#666;">{today} | {sub} | 信号计算逻辑与主策略完全一致</p>')
+
+    # 信号表
+    L.append('<h3>三品种信号</h3>')
+    L.append('<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;">')
+    L.append('<tr style="background:#f0f0f0;"><th>品种</th><th>价格</th><th>MA30</th><th>ADX</th><th>波动</th><th>信号</th><th>置信</th><th>持仓</th></tr>')
+    for code in ORDER:
+        if code not in signals:
             continue
+        s = signals[code]
         sig_txt = '<b style="color:green;">持有</b>' if s['signal'] == 1 else '<b style="color:red;">空仓</b>'
-        hold_txt = f"{holdings[code]}份" if holdings[code] > 0 else '-'
-        lines.append(f"<tr><td>{s['name']}</td><td>{s['price']:.4f}</td><td>{sig_txt}</td><td>{s['reason']}</td><td>{hold_txt}</td></tr>")
-    lines.append('</table>')
+        conf = s['conf']
+        conf_color = {'强': 'green', '中': 'orange', '弱': 'gray'}.get(conf['level'], 'gray')
+        conf_txt = f'<b style="color:{conf_color};">{conf["level"]}({conf["score"]})</b>' if s['signal'] == 1 else '-'
+        hold = holdings.get(code, 0)
+        hold_txt = f'{hold}份' if hold > 0 else '-'
+        L.append(f'<tr><td>{s["name"]}</td><td>{s["price"]:.4f}</td><td>{s["ma"]:.4f}</td>'
+                 f'<td>{s["adx"]}</td><td>{s["vol"]}%</td><td>{sig_txt}</td><td>{conf_txt}</td><td>{hold_txt}</td></tr>')
+    L.append('</table>')
 
-    lines.append('<h3>操作建议</h3>')
-    if picks:
-        for code in picks:
-            s = signals[code]
-            if holdings[code] > 0:
-                lines.append(f"<p>✅ <b>{s['name']}</b>: 信号持有中, 继续持有 {holdings[code]} 份, 无操作</p>")
-            else:
-                lines.append(f"<p>🟢 <b>{s['name']}</b>: 信号翻多! 明天开盘可买入 (建议全仓 {s['price']:.4f} 附近)</p>")
+    # QVIX
+    qvix = get_qvix()
+    if qvix:
+        qvix_txt = f'QVIX={qvix} ' + ('(平静)' if qvix < 20 else '(偏紧)' if qvix < 25 else '(恐慌)' if qvix < 30 else '(极度恐慌)')
+        L.append(f'<p>📊 <b>QVIX恐慌指数</b>: {qvix_txt}</p>')
+
+    # ===== 操作建议 =====
+    picks = [c for c in ORDER if c in signals and signals[c]['signal'] == 1]
+    L.append('<h3>操作建议</h3>')
+
+    if is_mid:
+        # 午间: 上午分析 + 下午建议
+        L.append('<p style="background:#e8f4f8;padding:8px;"><b>📌 下午操作指引</b></p>')
+        if picks:
+            for code in picks:
+                s = signals[code]
+                conf = s['conf']
+                if holdings.get(code, 0) > 0:
+                    L.append(f'<p>✅ <b>{s["name"]}</b>: 上午信号持有(置信{conf["level"]}), 下午继续持有 {holdings[code]} 份, 无操作</p>')
+                else:
+                    if conf['level'] == '强':
+                        L.append(f'<p style="color:red;"><b>🚨 强买入信号!</b> <b>{s["name"]}</b> 置信{conf["score"]}分, '
+                                 f'<b>下午务必操作: 建仓买入</b> (现价 {s["price"]:.4f} 附近)</p>')
+                    elif conf['level'] == '中':
+                        L.append(f'<p><b>🟡 中等信号</b> {s["name"]} (置信{conf["score"]}分), 下午可建仓一半, 收盘确认后加仓</p>')
+                    else:
+                        L.append(f'<p>⚪ <b>{s["name"]}</b> 弱信号(置信{conf["score"]}分), 贴线状态, 下午不追, 等收盘确认</p>')
+        else:
+            L.append('<p>🔴 三个品种上午均无买入信号, 下午不操作, 继续持币/逆回购</p>')
+
+        # 持仓但无信号的提醒
+        for code, sh in holdings.items():
+            if sh > 0 and code not in picks:
+                L.append(f'<p style="color:red;"><b>⚠️ {ASSETS[code]["name"]}</b>: 持有 {sh} 份但上午信号空仓, '
+                         f'<b>下午建议卖出</b>转逆回购</p>')
+
+        L.append('<p style="color:#999;font-size:12px;">* 午间信号基于上午收盘数据, 下午行情可能变化, 最终以收盘信号为准</p>')
+
     else:
-        lines.append('<p>🔴 三个品种均无买入信号, 继续持币/逆回购, 等下一个信号</p>')
+        # 收盘: 全天分析 + 次日建议
+        L.append('<p style="background:#fdf6e3;padding:8px;"><b>📌 次日操作指引</b></p>')
+        if picks:
+            for code in picks:
+                s = signals[code]
+                conf = s['conf']
+                if holdings.get(code, 0) > 0:
+                    L.append(f'<p>✅ <b>{s["name"]}</b>: 收盘信号持有(置信{conf["level"]}), 继续持有 {holdings[code]} 份</p>')
+                else:
+                    if conf['level'] == '强':
+                        L.append(f'<p style="color:red;"><b>🚨 强买入信号!</b> <b>{s["name"]}</b> 置信{conf["score"]}分, '
+                                 f'<b>明天开盘务必买入</b> (现价 {s["price"]:.4f} 附近)</p>')
+                    elif conf['level'] == '中':
+                        L.append(f'<p><b>🟡 中等信号</b> {s["name"]} (置信{conf["score"]}分), 明天可建仓一半, 观察后加仓</p>')
+                    else:
+                        L.append(f'<p>⚪ <b>{s["name"]}</b> 弱信号(置信{conf["score"]}分), 可轻仓试探或等待更强确认</p>')
+        else:
+            L.append('<p>🔴 三品种收盘均无买入信号, 继续持币/逆回购, 等下一个信号</p>')
 
-    # 持仓但无信号的
-    for code, sh in holdings.items():
-        if sh > 0 and code not in picks:
-            s = signals.get(code, {})
-            lines.append(f"<p>⚠️ <b>{ASSETS[code]['name']}</b>: 持有 {sh} 份但信号已空仓, 建议明天卖出转逆回购!</p>")
+        for code, sh in holdings.items():
+            if sh > 0 and code not in picks:
+                L.append(f'<p style="color:red;"><b>⚠️ {ASSETS[code]["name"]}</b>: 持有 {sh} 份但收盘信号空仓, '
+                         f'<b>明天开盘卖出</b>转逆回购</p>')
 
-    lines.append('<hr>')
-    lines.append('<p style="color:#999;font-size:12px;">本邮件由量化策略系统自动发送, 仅供参考, 不构成投资建议</p>')
-    return '\n'.join(lines)
+        L.append('<p style="color:#999;font-size:12px;">* 收盘信号为当日最终信号, 次日按此执行</p>')
+
+    L.append('<hr>')
+    L.append('<p style="color:#999;font-size:12px;">本邮件由量化策略系统自动发送, 仅供参考, 不构成投资建议</p>')
+    return '\n'.join(L)
 
 
 def send_email(subject, html):
-    """发送邮件"""
     msg = MIMEText(html, 'html', 'utf-8')
     msg['Subject'] = Header(subject, 'utf-8')
     msg['From'] = SMTP_CONFIG['sender']
     msg['To'] = SMTP_CONFIG['to']
-
     try:
         server = smtplib.SMTP_SSL(SMTP_CONFIG['smtp_server'], SMTP_CONFIG['smtp_port'], timeout=30)
         server.login(SMTP_CONFIG['sender'], SMTP_CONFIG['auth_code'])
@@ -204,24 +315,34 @@ def send_email(subject, html):
 
 
 def main():
-    if 'YOUR_AUTH_CODE' in SMTP_CONFIG['auth_code']:
-        print('⚠️ 请先在 send_advice.py 中配置163邮箱授权码!')
-        print('   获取方式: 163邮箱 → 设置 → 客户端授权密码')
-        return
-
     mode = sys.argv[1] if len(sys.argv) > 1 else 'close'
-
-    signals = get_latest_signals(mode)
-    if not signals:
-        print('未获取到信号数据')
+    if 'YOUR_AUTH_CODE' in SMTP_CONFIG['auth_code']:
+        print('请先配置163邮箱授权码')
         return
 
-    html = build_advice(signals)
-    today = datetime.now().strftime('%Y-%m-%d')
-    time_label = '午间' if mode == 'mid' else '收盘'
+    # 获取价格 (午间=实时, 收盘=历史库)
+    if mode == 'mid':
+        prices = get_prices_realtime()
+        time_label = '午间'
+    else:
+        prices = get_prices_from_history()
+        time_label = '收盘'
 
-    # 生成操作摘要作为主题
-    picks = [c for c, s in signals.items() if s['signal'] == 1]
+    if not prices:
+        print('价格获取失败')
+        return
+
+    # 统一信号计算
+    signals = compute_signals(prices)
+
+    # 持仓
+    holdings = {c: check_position(c) for c in ASSETS}
+
+    # 生成邮件
+    html = build_email_html(mode, signals, holdings)
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    picks = [c for c in ORDER if c in signals and signals[c]['signal'] == 1]
     if picks:
         subject = f'[{today} {time_label}] 策略: 买入 {ASSETS[picks[0]]["name"]}'
     else:
@@ -229,7 +350,7 @@ def main():
 
     ok = send_email(subject, html)
     if ok:
-        print(f'[OK] 邮件已发送: {subject}')
+        print(f'[OK] {time_label}邮件已发送: {subject}')
     else:
         print('[FAIL] 邮件发送失败')
 
