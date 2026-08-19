@@ -199,19 +199,107 @@ def get_qvix():
 
 
 # ========== 邮件正文生成 ==========
+def get_cash():
+    """读取当前现金 (取所有交易记录中日期最新的一笔balance)"""
+    import pandas as pd
+    import glob
+    files = glob.glob(os.path.join(PROJECT_ROOT, 'trades', '*_trades.csv'))
+    best_date = None
+    best_cash = 0
+    for f in files:
+        try:
+            df = pd.read_csv(f)
+            if 'balance' in df.columns and 'date' in df.columns and len(df) > 0:
+                for _, row in df.iterrows():
+                    b = row.get('balance')
+                    d = row.get('date')
+                    if pd.notna(b) and pd.notna(d):
+                        try:
+                            bv = float(b)
+                            dv = str(d)
+                            if best_date is None or dv > best_date:
+                                best_date = dv
+                                best_cash = bv
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+    return best_cash
+
+
 def build_email_html(mode, signals, holdings):
-    """生成邮件HTML (午间/收盘区分)"""
+    """生成邮件HTML (午间/收盘区分) - 明确指令式建议"""
     today = datetime.now().strftime('%Y-%m-%d')
     is_mid = (mode == 'mid')
     title = '午间策略快报' if is_mid else '收盘策略报告'
-    sub = '上午收盘分析 + 下午操作建议' if is_mid else '全天分析 + 次日操作建议'
+    sub = '上午收盘分析 + 下午操作指令' if is_mid else '全天分析 + 次日操作指令'
+
+    cash = get_cash()
+    total_value = cash + sum(holdings.get(c, 0) * signals[c]['price'] for c in holdings if c in signals)
 
     L = []
     L.append(f'<h2>{title}</h2>')
     L.append(f'<p style="color:#666;">{today} | {sub} | 信号计算逻辑与主策略完全一致</p>')
 
-    # 信号表
-    L.append('<h3>三品种信号</h3>')
+    # ===== 一、明确操作指令 (放最前面, 最醒目) =====
+    picks = [c for c in ORDER if c in signals and signals[c]['signal'] == 1]
+    L.append('<h3 style="background:#1a1a2e;color:white;padding:8px;">一、操作指令</h3>')
+
+    if picks:
+        # 有信号品种
+        for code in picks:
+            s = signals[code]
+            conf = s['conf']
+            hold = holdings.get(code, 0)
+            if hold > 0:
+                action = '继续持有'
+                detail = f'不卖出, 持有 {hold} 份不动'
+                color = 'green'
+            elif conf['level'] == '强':
+                action = '买入'
+                price_zone = f'{s["price"]:.4f} 附近'
+                detail = f'全仓买入(¥{total_value:,.0f}), 挂单价格 {price_zone}, 不追高超过 +1%'
+                color = 'red'
+            elif conf['level'] == '中':
+                action = '买入(半仓)'
+                price_zone = f'{s["price"]:.4f} 附近'
+                detail = f'半仓买入(约¥{total_value/2:,.0f}), 挂单价格 {price_zone}, 收盘确认后再补'
+                color = 'orange'
+            else:
+                action = '观望'
+                detail = f'不买入(弱信号, 等收盘确认)'
+                color = 'gray'
+
+            time_txt = '下午' if is_mid else '明天开盘'
+            L.append(f'<div style="border:2px solid {color};border-radius:8px;padding:12px;margin:8px 0;background:#fff;">'
+                     f'<b style="font-size:16px;color:{color};">▶ {action}</b> '
+                     f'<b>{s["name"]}</b> (置信{conf["level"]} {conf["score"]}分)<br>'
+                     f'<span style="color:#333;">{detail}</span><br>'
+                     f'<span style="color:#999;font-size:12px;">执行时间: {time_txt} | 现价 {s["price"]:.4f}</span>'
+                     f'</div>')
+    else:
+        time_txt = '下午' if is_mid else '明天'
+        L.append(f'<div style="border:2px solid #999;border-radius:8px;padding:12px;margin:8px 0;background:#fff;">'
+                 f'<b style="font-size:16px;color:#999;">▶ 不操作</b> '
+                 f'<b>三个品种均无买入信号</b><br>'
+                 f'<span style="color:#333;">继续持有现金(¥{cash:,.0f}), 不做任何买入</span><br>'
+                 f'<span style="color:#999;font-size:12px;">等下一个信号出现再操作</span>'
+                 f'</div>')
+
+    # 持仓但无信号的 → 卖出指令
+    for code, hold in holdings.items():
+        if hold > 0 and code not in picks:
+            s = signals.get(code, {})
+            time_txt = '下午' if is_mid else '明天开盘'
+            L.append(f'<div style="border:2px solid red;border-radius:8px;padding:12px;margin:8px 0;background:#fff8f8;">'
+                     f'<b style="font-size:16px;color:red;">▶ 卖出</b> '
+                     f'<b>{ASSETS[code]["name"]}</b> 全部 {hold} 份<br>'
+                     f'<span style="color:#333;">信号已空仓, 必须卖出</span><br>'
+                     f'<span style="color:#999;font-size:12px;">执行时间: {time_txt} | 现价 {s.get("price", 0):.4f}</span>'
+                     f'</div>')
+
+    # ===== 二、信号明细 =====
+    L.append(f'<h3 style="background:#333;color:white;padding:8px;">二、信号明细</h3>')
     L.append('<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;">')
     L.append('<tr style="background:#f0f0f0;"><th>品种</th><th>价格</th><th>MA30</th><th>ADX</th><th>波动</th><th>信号</th><th>置信</th><th>持仓</th></tr>')
     for code in ORDER:
@@ -228,70 +316,15 @@ def build_email_html(mode, signals, holdings):
                  f'<td>{s["adx"]}</td><td>{s["vol"]}%</td><td>{sig_txt}</td><td>{conf_txt}</td><td>{hold_txt}</td></tr>')
     L.append('</table>')
 
-    # QVIX
+    # ===== 三、背景参考 =====
+    L.append(f'<h3 style="background:#555;color:white;padding:8px;">三、背景参考</h3>')
     qvix = get_qvix()
     if qvix:
         qvix_txt = f'QVIX={qvix} ' + ('(平静)' if qvix < 20 else '(偏紧)' if qvix < 25 else '(恐慌)' if qvix < 30 else '(极度恐慌)')
-        L.append(f'<p>📊 <b>QVIX恐慌指数</b>: {qvix_txt}</p>')
-
-    # ===== 操作建议 =====
-    picks = [c for c in ORDER if c in signals and signals[c]['signal'] == 1]
-    L.append('<h3>操作建议</h3>')
-
-    if is_mid:
-        # 午间: 上午分析 + 下午建议
-        L.append('<p style="background:#e8f4f8;padding:8px;"><b>📌 下午操作指引</b></p>')
-        if picks:
-            for code in picks:
-                s = signals[code]
-                conf = s['conf']
-                if holdings.get(code, 0) > 0:
-                    L.append(f'<p>✅ <b>{s["name"]}</b>: 上午信号持有(置信{conf["level"]}), 下午继续持有 {holdings[code]} 份, 无操作</p>')
-                else:
-                    if conf['level'] == '强':
-                        L.append(f'<p style="color:red;"><b>🚨 强买入信号!</b> <b>{s["name"]}</b> 置信{conf["score"]}分, '
-                                 f'<b>下午务必操作: 建仓买入</b> (现价 {s["price"]:.4f} 附近)</p>')
-                    elif conf['level'] == '中':
-                        L.append(f'<p><b>🟡 中等信号</b> {s["name"]} (置信{conf["score"]}分), 下午可建仓一半, 收盘确认后加仓</p>')
-                    else:
-                        L.append(f'<p>⚪ <b>{s["name"]}</b> 弱信号(置信{conf["score"]}分), 贴线状态, 下午不追, 等收盘确认</p>')
-        else:
-            L.append('<p>🔴 三个品种上午均无买入信号, 下午不操作, 继续持币/逆回购</p>')
-
-        # 持仓但无信号的提醒
-        for code, sh in holdings.items():
-            if sh > 0 and code not in picks:
-                L.append(f'<p style="color:red;"><b>⚠️ {ASSETS[code]["name"]}</b>: 持有 {sh} 份但上午信号空仓, '
-                         f'<b>下午建议卖出</b>转逆回购</p>')
-
-        L.append('<p style="color:#999;font-size:12px;">* 午间信号基于上午收盘数据, 下午行情可能变化, 最终以收盘信号为准</p>')
-
-    else:
-        # 收盘: 全天分析 + 次日建议
-        L.append('<p style="background:#fdf6e3;padding:8px;"><b>📌 次日操作指引</b></p>')
-        if picks:
-            for code in picks:
-                s = signals[code]
-                conf = s['conf']
-                if holdings.get(code, 0) > 0:
-                    L.append(f'<p>✅ <b>{s["name"]}</b>: 收盘信号持有(置信{conf["level"]}), 继续持有 {holdings[code]} 份</p>')
-                else:
-                    if conf['level'] == '强':
-                        L.append(f'<p style="color:red;"><b>🚨 强买入信号!</b> <b>{s["name"]}</b> 置信{conf["score"]}分, '
-                                 f'<b>明天开盘务必买入</b> (现价 {s["price"]:.4f} 附近)</p>')
-                    elif conf['level'] == '中':
-                        L.append(f'<p><b>🟡 中等信号</b> {s["name"]} (置信{conf["score"]}分), 明天可建仓一半, 观察后加仓</p>')
-                    else:
-                        L.append(f'<p>⚪ <b>{s["name"]}</b> 弱信号(置信{conf["score"]}分), 可轻仓试探或等待更强确认</p>')
-        else:
-            L.append('<p>🔴 三品种收盘均无买入信号, 继续持币/逆回购, 等下一个信号</p>')
-
-        for code, sh in holdings.items():
-            if sh > 0 and code not in picks:
-                L.append(f'<p style="color:red;"><b>⚠️ {ASSETS[code]["name"]}</b>: 持有 {sh} 份但收盘信号空仓, '
-                         f'<b>明天开盘卖出</b>转逆回购</p>')
-
-        L.append('<p style="color:#999;font-size:12px;">* 收盘信号为当日最终信号, 次日按此执行</p>')
+        L.append(f'<p>📊 <b>QVIX恐慌指数</b>: {qvix_txt} ' +
+                 ('→ 仓位不受限' if qvix < 20 else '→ 建议降仓' if qvix >= 25 else '→ 正常'))
+    L.append(f'<p>💰 当前资金: 现金 ¥{cash:,.0f}, 总资产约 ¥{total_value:,.0f}</p>')
+    L.append('<p style="color:#999;font-size:12px;">' + ('* 午间信号基于上午数据, 下午行情可能变化, 若下午信号转强/转弱, 以收盘邮件为准' if is_mid else '* 收盘信号为当日最终信号, 次日按此执行') + '</p>')
 
     L.append('<hr>')
     L.append('<p style="color:#999;font-size:12px;">本邮件由量化策略系统自动发送, 仅供参考, 不构成投资建议</p>')
