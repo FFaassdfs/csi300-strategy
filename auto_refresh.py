@@ -136,7 +136,7 @@ def compute_and_log_signals(conn):
         strong_trend = (adx > adx_th).astype(int)
         signal = (above_ma50 & (low_vol | strong_trend)).astype(int)
 
-        # 最新值
+        # 最新值 (当日收盘信号)
         i = -1
         price = float(c.iloc[i])
         ma50_v = float(ma50.iloc[i]) if not pd.isna(ma50.iloc[i]) else 0
@@ -144,7 +144,7 @@ def compute_and_log_signals(conn):
         vol_v = float(vol.iloc[i]) if not pd.isna(vol.iloc[i]) else 0
         mom_v = float(momentum.iloc[i]) if not pd.isna(momentum.iloc[i]) else 0
         bb_v = float(bb_pct_b.iloc[i]) if not pd.isna(bb_pct_b.iloc[i]) else 0
-        sig_v = int(signal.iloc[-2])  # yesterday close signal
+        sig_v = int(signal.iloc[-1])  # 当日收盘信号 (用于次日操作)
         above_v = bool(above_ma50.iloc[i])
         low_v = bool(low_vol.iloc[i])
         trend_v = bool(strong_trend.iloc[i])
