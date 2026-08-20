@@ -189,13 +189,21 @@ def check_position(code):
 
 
 def get_qvix():
-    """获取QVIX"""
-    try:
+    """获取QVIX (线程超时保护, 失败时不影响邮件发送)"""
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
+    def _fetch():
         import akshare as ak
         df = ak.index_option_300etf_qvix()
         return round(float(df.iloc[-1]['close']), 2)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_fetch)
+            return fut.result(timeout=12)
+    except FutTimeout:
+        print('QVIX获取超时(12s), 跳过')
     except Exception:
-        return None
+        pass
+    return None
 
 
 # ========== 邮件正文生成 ==========
