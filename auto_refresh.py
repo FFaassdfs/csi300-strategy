@@ -17,6 +17,23 @@ HISTORY_DB = os.path.join(PROJECT_ROOT, 'trading_history.duckdb')
 WORK_DB = os.path.join(PROJECT_ROOT, 'csi300_data.duckdb')
 RF = 0.025
 
+# ===== 全局网络超时保护 (防止akshare请求卡死) =====
+import socket
+socket.setdefaulttimeout(20)
+
+# requests 全局超时
+try:
+    import requests.adapters
+    from requests.adapters import HTTPAdapter
+    import requests
+    _orig_send = requests.sessions.Session.request
+    def _timeout_send(self, method, url, **kwargs):
+        kwargs.setdefault('timeout', 20)
+        return _orig_send(self, method, url, **kwargs)
+    requests.sessions.Session.request = _timeout_send
+except Exception:
+    pass
+
 ASSETS = {
     '510310': {'name': '沪深300ETF', 'code': 'sh510310', 'ma_p': 30, 'adx_th': 20, 'vol_th': 18},
     '159995': {'name': '芯片ETF',    'code': 'sz159995', 'ma_p': 30, 'adx_th': 25, 'vol_th': 15},
@@ -33,35 +50,46 @@ def log(msg):
 
 
 def fetch_all_daily():
-    """获取所有品种日线 (含拆分调整)"""
+    """获取所有品种日线 (含拆分调整, socket超时保护)"""
     import akshare as ak
     cutoff = pd.Timestamp.now() - pd.DateOffset(years=YEARS)
 
     result = {}
     # CSI300 index
-    df = ak.stock_zh_index_daily(symbol='sh000300')
-    df['date'] = pd.to_datetime(df['date'])
-    df = df[['date', 'open', 'high', 'low', 'close']].dropna().sort_values('date')
-    df = df[df['date'] >= cutoff]
+    try:
+        df = ak.stock_zh_index_daily(symbol='sh000300')
+        if len(df) > 0:
+            df['date'] = pd.to_datetime(df['date'])
+            df = df[['date', 'open', 'high', 'low', 'close']].dropna().sort_values('date')
+            df = df[df['date'] >= cutoff]
+    except Exception as e:
+        log(f'  [WARN] 沪深300指数获取失败: {e}')
+        df = pd.DataFrame()
     result['000300'] = df
 
     for code, info in ASSETS.items():
-        df = ak.fund_etf_hist_sina(symbol=info['code'])
-        df['date'] = pd.to_datetime(df['date'])
-        df = df[['date', 'open', 'high', 'low', 'close', 'volume', 'amount']].dropna(subset=['close']).sort_values('date')
+        try:
+            df = ak.fund_etf_hist_sina(symbol=info['code'])
+            if len(df) == 0:
+                log(f'  [WARN] {code} 数据为空, 跳过')
+                continue
+            df['date'] = pd.to_datetime(df['date'])
+            df = df[['date', 'open', 'high', 'low', 'close', 'volume', 'amount']].dropna(subset=['close']).sort_values('date')
 
-        # Split adjustment
-        c = df['close'].values
-        for i in range(1, len(c)):
-            if c[i] > 0 and c[i-1] > 0 and c[i-1] / c[i] > 1.8:
-                ratio = round(c[i-1] / c[i])
-                log(f'  [SPLIT] {code} 1:{ratio} on {df["date"].iloc[i].date()}')
-                for col in ['open', 'high', 'low', 'close']:
-                    df.loc[df.index[:i], col] = df.loc[df.index[:i], col] / ratio
-                break
+            # Split adjustment
+            c = df['close'].values
+            for i in range(1, len(c)):
+                if c[i] > 0 and c[i-1] > 0 and c[i-1] / c[i] > 1.8:
+                    ratio = round(c[i-1] / c[i])
+                    log(f'  [SPLIT] {code} 1:{ratio} on {df["date"].iloc[i].date()}')
+                    for col in ['open', 'high', 'low', 'close']:
+                        df.loc[df.index[:i], col] = df.loc[df.index[:i], col] / ratio
+                    break
 
-        df = df[df['date'] >= cutoff]
-        result[code] = df
+            df = df[df['date'] >= cutoff]
+            result[code] = df
+        except Exception as e:
+            log(f'  [WARN] {code} 获取失败: {e}')
 
     return result
 
@@ -73,8 +101,6 @@ def append_ohlc(conn, code, name, df):
     ).fetchall()
     existing_dates = {d[0] for d in existing}
 
-    new_rows = df[~df['date'].dt.date.isin(existing_dates)]
-    # 注意: duckdb date 类型与 python date 比较
     new_rows = []
     for _, row in df.iterrows():
         d = row['date'].date()
