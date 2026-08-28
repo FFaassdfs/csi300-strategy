@@ -15,6 +15,20 @@ from datetime import datetime
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
+# ===== 全局网络超时保护 =====
+import socket
+socket.setdefaulttimeout(15)
+try:
+    import requests.sessions
+    import requests
+    _orig_send = requests.sessions.Session.request
+    def _timeout_send(self, method, url, **kwargs):
+        kwargs.setdefault('timeout', 15)
+        return _orig_send(self, method, url, **kwargs)
+    requests.sessions.Session.request = _timeout_send
+except Exception:
+    pass
+
 # ========== 邮件配置 ==========
 SMTP_CONFIG = {
     'sender': 'aassdfs@163.com',
@@ -189,18 +203,12 @@ def check_position(code):
 
 
 def get_qvix():
-    """获取QVIX (线程超时保护, 失败时不影响邮件发送)"""
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
-    def _fetch():
+    """获取QVIX (socket超时保护)"""
+    try:
         import akshare as ak
         df = ak.index_option_300etf_qvix()
-        return round(float(df.iloc[-1]['close']), 2)
-    try:
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_fetch)
-            return fut.result(timeout=12)
-    except FutTimeout:
-        print('QVIX获取超时(12s), 跳过')
+        if df is not None and len(df) > 0:
+            return round(float(df.iloc[-1]['close']), 2)
     except Exception:
         pass
     return None
