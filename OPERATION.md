@@ -408,7 +408,7 @@ python backfill_history.py
 | 发件邮箱 | aassdfs@163.com |
 | 收件邮箱 | aassdfs@qq.com |
 | SMTP | smtp.163.com:465 SSL |
-| 授权码 | (在 send_advice.py SMTP_CONFIG 中, 保密勿外传) |
+| 授权码 | 在 `local_secrets.py`（被 .gitignore 忽略，不入 git）；也可用环境变量 `SMTP_AUTH_CODE`。⚠️ 2026-09-10 发现旧授权码曾随代码泄漏至公开 GitHub 仓库并已清洗历史，**旧授权码必须重置** |
 | GitHub | https://github.com/FFaassdfs/csi300-strategy (用户 FFaassdfs) |
 
 ---
