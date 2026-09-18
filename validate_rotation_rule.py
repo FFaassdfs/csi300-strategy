@@ -36,7 +36,7 @@ def load_aligned(conn):
     return inds, list(dates)
 
 
-def simulate(inds, i0, i1, rule, brake, cost=COST):
+def simulate(inds, i0, i1, rule, brake, cost=COST, caps=None, min_w=0.0):
     O = {cd: inds[cd]['open'] for cd in ORDER}
     C = {cd: inds[cd]['close'] for cd in ORDER}
     MA = {cd: inds[cd]['ma'] for cd in ORDER}
@@ -52,6 +52,11 @@ def simulate(inds, i0, i1, rule, brake, cost=COST):
     w_tgt = {cd: 0.0 for cd in ORDER}   # 上一收盘决定的目标权重
     held = None
     trades, turnover = 0, 0.0
+    caps = caps or {}
+
+    def cap_of(cd):
+        """品种权重上限; min_w>0 时启用下限(择时品种空仓时也保留底仓)"""
+        return float(caps.get(cd, 1.0))
 
     def conf(cd, t):
         return SIG[cd][t] == 1 and t > 0 and SIG[cd][t - 1] == 1
@@ -105,7 +110,8 @@ def simulate(inds, i0, i1, rule, brake, cost=COST):
                 if not sig_ok:
                     pick = None
             if pick is not None:
-                nw[pick] = BRAKE_W if (brake and VOL[pick][t] > BRAKE_TH) else 1.0
+                bw = BRAKE_W if (brake and VOL[pick][t] > BRAKE_TH) else 1.0
+                nw[pick] = min(cap_of(pick), bw)
         w_tgt = nw
     return equity, trades, turnover
 
