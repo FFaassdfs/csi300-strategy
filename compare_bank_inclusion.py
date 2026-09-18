@@ -5,6 +5,8 @@
 方案C: 银行单独ADX策略 (MA30/ADX25/Vol18)
 方案D: 银行单独Buy&Hold
 方案E: 银行+双品种轮动, 银行长期持有底仓 (银行信号1时持有银行, 否则轮动另两品种)
+
+【研究脚本】银行纳入决策的依据实验 (结论已固化于 OPERATION.md §11.3 #1), 读 trading_history.duckdb。
 """
 import pandas as pd
 import numpy as np

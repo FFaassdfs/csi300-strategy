@@ -1,6 +1,10 @@
 """
-沪深300 ETF 趋势跟踪 + 波动率风控策略
+沪深300 ETF 趋势跟踪 + 波动率风控策略 (v1 旧版)
 三个策略：ADX Override / Momentum Override / Absolute 15%
+
+⚠️【已废弃】v1 口径 (MA50/波动率15%/ADX25, 单品种指数)。生产信号统一实现在
+   signal_core.compute_signal_core (MA30 + 各品种参数 + 2日确认), 本模块仅供
+   旧回测脚本 (build_db_and_backtest/run_strategy 等) 引用, 勿用于实盘决策。
 """
 
 import pandas as pd

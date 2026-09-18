@@ -1,82 +1,71 @@
-# CSI300 ETF 趋势跟踪策略
+# CSI300 多品种 ADX Override 轮动策略
 
-沪深300指数的量化择时策略，结合波动率风控和趋势确认。
+沪深300 指数量化择时系统：在 3 只 ETF 之间轮动，有信号持有、无信号持币/逆回购。不做空、不加杠杆、不买个股。
 
-## 策略概述
+> 完整操作手册：**[OPERATION.md](OPERATION.md)**（权威）。本 README 只是速览。
+> PROJECT_OVERVIEW.md 为 v1 单品种方案的历史快照，已被 OPERATION.md 取代。
 
-基于三个策略的集成：
-- **+ADX>25 Override**: 趋势确认时持有
-- **+Momentum>10% Override**: 动量确认时持有
-- **Base Absolute 15%**: 波动率阈值控制
-
-## 策略逻辑
+## 策略规则（现行 v2）
 
 ```
-买入信号: 价格 > MA50 AND (波动率 < 15% OR 趋势确认信号)
-卖出信号: 价格 < MA50 OR 波动率 >= 15%
+持有条件 = 价格 > MA30 AND (20日波动率 < 品种阈值 OR ADX > 品种阈值)
+入场需连续 2 日确认；出场信号消失立即卖出（不等确认）
+T日收盘算信号 → T+1 开盘执行
+多品种有信号 → 持有 ADX 最高者；全无 → 国债/逆回购
 ```
 
-## 核心指标
+| 品种 | MA | ADX阈值 | 波动率阈值 | 定位 |
+|------|----|---------|-----------|------|
+| 510310 沪深300ETF | 30 | 20 | 18% | 主进攻 |
+| 159995 芯片ETF | 30 | 25 | 15% | 高弹性 |
+| 512800 银行ETF | 30 | 25 | 18% | 防守仓 |
 
-| 指标 | 计算方式 |
-|------|---------|
-| MA50 | 50日简单移动平均 |
-| 波动率 | 20日收益率标准差，年化 |
-| 动量 | 20日价格变化率 |
-| ADX | 趋势强度指标 |
+仓位调节：QVIX 恐慌指数分档（100/80/60/40%）× 极端波动刹车（vol>35%→60%）。
+
+## 每日流程（Windows 计划任务自动，Python 3.12）
+
+| 时间 | 脚本 | 作用 |
+|------|------|------|
+| 11:35 | `intraday_signal.py mid` | 盘中快照 |
+| 12:00 | `send_advice.py mid` | 午间邮件（下午操作建议） |
+| 15:10 | `daily_close.py` → `auto_refresh.py` | 行情入库 + 指标/信号记录（不发邮件） |
+| 16:00 | `send_advice.py close` | 收盘邮件（**次日操作指令权威来源**） |
+
+手动命令：
+
+```bash
+python auto_refresh.py      # 刷新数据入库
+python dual_rotation.py     # 只看三品种轮动信号(不发邮件)
+python send_advice.py close # 手动发收盘邮件
+```
 
 ## 目录结构
 
+- **权威核心**：`config.py`（品种池/路径）、`signal_core.py`（信号/置信度/QVIX/刹车/持仓唯一实现）
+- **生产脚本**：`auto_refresh.py`、`send_advice.py`、`intraday_signal.py`、`daily_close.py`、`dual_rotation.py`
+- **数据**：`trading_history.duckdb`（历史库，追加式）、`trades/*_trades.csv`（持仓与现金权威来源）
+- **研究/回测**：`validate_tier1.py`（walk-forward/成本/过滤器）、`validate_expansion.py`（扩池，已否决）、`validate_voltarget.py`（仓位模式，采纳极端刹车）、`validate_signals.py`、`compare_bank_inclusion.py`
+- **废弃 v1**（勿用于实盘）：`generate_html_report.py`、`execute_daily.py`、`run_strategy.py`、`strategies/`、`daily_refresh.py`、`csi300_data.duckdb` 等，详见 OPERATION.md §7.1 目录树
+
+## 关键回测数字（3 品种轮动，2020-04 ~ 2026-09，含 10bp 单边成本，见 OPERATION.md §11）
+
+| 方案 | 年化 | Sharpe | 最大回撤 |
+|------|------|--------|---------|
+| 现行（2日确认） | +20.4% | 0.79 | -21.6% |
+| + 极端波动刹车(35%/60%) | +16.0% | 0.75 | -16.8%（2026年以来回撤 -13.7%，Sharpe 1.36） |
+
+> 基准确诊数据见 `reports/tier1_validation_20260907.md`（E3/E4）与 `reports/voltarget_validation_20260907.md`（V7）；510310 单品种全样本 Buy&Hold 年化 +13.8%（2013-2026，`reports/expansion_validation_20260907.md` E-A）。
+
+预期请按"含成本 +15~20%/年、回撤 -20~-30%"规划。
+
+## 依赖
+
 ```
-hs300/
-├── README.md                     # 本文件
-├── requirements.txt              # 依赖列表
-├── generate_html_report.py       # 生成HTML策略报告（主程序）
-├── execute_daily.py              # 每日执行脚本
-├── run_strategy.py               # 策略运行器
-├── build_db_and_backtest.py      # 数据下载 + 数据库构建 + 回测
-├── csi300_data.duckdb            # 沪深300历史数据库
-├── strategies/
-│   └── csi300_strategies.py      # 三个策略定义 + 指标计算
-└── reports/
-    ├── daily_signal_*.html       # 每日报告输出
-    └── backtest_report.txt       # 回测报告
-```
-
-## 使用方法
-
-```bash
-cd hs300
-py -3.11 generate_html_report.py
-```
-
-## 回测结果（2021-08 ~ 2026-06，真实数据 + Wilder标准ADX）
-
-| 策略 | 年化收益 | Sharpe | 最大回撤 | 持仓比例 | 交易次数 |
-|------|---------|--------|---------|---------|---------|
-| ADX Override | +7.71% | 0.48 | -10.99% | 35.9% | 77 |
-| Momentum Override | +3.55% | 0.11 | -10.99% | 28.4% | 80 |
-| Absolute 15% | +2.32% | -0.03 | -10.10% | 26.1% | 74 |
-| Buy&Hold (基准) | +0.19% | -- | -37.86% | 100% | 0 |
-
-> 注：Buy & Hold 在该回测区间年化仅 +0.19%（沪深300近5年基本持平），最大回撤达 -37.86%
-
-## 回测结论
-
-1. **ADX Override 是最优策略**：年化 +7.71%、最大回撤仅 -10.99%，三项策略中唯一 Sharpe > 0 的
-2. **Absolute 15% 过于保守**：Sharpe 为负，连无风险利率都跑不赢，26% 时间空仓错过太多机会
-3. **Momentum Override 动量阈值偏高**：20日涨 10% 在 A 股触发频率太低，多数时间由波动率条件维持信号
-4. **统一优势**：三个策略均将最大回撤从 -37.86% 降至 -10% 左右，风控效果显著
-
-## 运行回测
-
-```bash
-cd hs300
-python build_db_and_backtest.py   # 下载数据 + 构建数据库 + 回测
+baostock  akshare  pandas  duckdb   # requirements.txt
 ```
 
 ## 注意事项
 
-- 本策略仅供参考，不构成投资建议
-- 历史回测不代表未来收益
-- 投资有风险，决策需谨慎
+- 所有策略输出仅供研究参考，不构成投资建议
+- 信号唯一实现 `signal_core.py`，任何口径修改只改这里
+- 交易执行后必须登记 `trades/<代码>_trades.csv` 且 balance 必填（邮件现金显示依赖它）

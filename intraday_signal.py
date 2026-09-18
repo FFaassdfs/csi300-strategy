@@ -14,16 +14,16 @@ import requests
 from datetime import datetime
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-WORK_DB = os.path.join(PROJECT_ROOT, 'csi300_data.duckdb')
-HISTORY_DB = os.path.join(PROJECT_ROOT, 'trading_history.duckdb')
+sys.path.insert(0, PROJECT_ROOT)
 
-ASSETS = {
-    '510310': {'name': '沪深300ETF', 'code': 'sh510310', 'ma_p': 30, 'adx_th': 20, 'vol_th': 18},
-    '159995': {'name': '芯片ETF',    'code': 'sz159995', 'ma_p': 30, 'adx_th': 25, 'vol_th': 15},
-    '512800': {'name': '银行ETF',    'code': 'sh512800', 'ma_p': 30, 'adx_th': 25, 'vol_th': 18},
-}
-RF = 0.025
-BOND_DAILY = (1 + RF) ** (1/252) - 1
+# ===== 全局网络超时保护 =====
+import socket
+socket.setdefaulttimeout(15)
+
+from config import ASSETS, ORDER, HISTORY_DB
+from signal_core import (last_signal_state, compute_confidence, qvix_position_ratio,
+                         fetch_qvix, VOL_BRAKE_THRESHOLD, vol_brake_weight,
+                         holdings_from_trades)
 
 
 def get_realtime_quotes():
@@ -58,142 +58,21 @@ def get_latest_ohlc(code):
 
 
 def compute_current_signal(df, realtime_price, info):
-    """用历史数据+实时价计算当前信号"""
+    """用历史数据+实时价计算当前信号 (委托给 signal_core, 保证与其他脚本一致)
+    仅当库内尚无当日K线时才把实时价追加为合成K线;
+    若 auto_refresh 已入库今日数据, 再追加会产生重复K线使指标失真
+    (与 send_advice.compute_signals 的 append 门控保持同一原则)"""
     c = df['close'].astype(float)
     h = df['high'].astype(float)
     l = df['low'].astype(float)
-    ma_p, adx_th, vol_th = info['ma_p'], info['adx_th'], info['vol_th']
 
-    # 把实时价追加为最新close (盘中用)
-    c = pd.concat([c, pd.Series([realtime_price])]).reset_index(drop=True)
-    h = pd.concat([h, pd.Series([realtime_price])]).reset_index(drop=True)
-    l = pd.concat([l, pd.Series([realtime_price])]).reset_index(drop=True)
+    today = pd.Timestamp.now().normalize()
+    if not df['date'].empty and df['date'].iloc[-1] < today:
+        c = pd.concat([c, pd.Series([realtime_price])]).reset_index(drop=True)
+        h = pd.concat([h, pd.Series([realtime_price])]).reset_index(drop=True)
+        l = pd.concat([l, pd.Series([realtime_price])]).reset_index(drop=True)
 
-    ma = c.rolling(ma_p).mean()
-    vol = c.pct_change().rolling(20).std() * np.sqrt(252) * 100
-    tr = pd.concat([h-l, abs(h-c.shift(1)), abs(l-c.shift(1))], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/14, adjust=False).mean()
-    up = h.diff(); dn = -l.diff()
-    pdm = pd.Series(0.0, index=c.index); ndm = pd.Series(0.0, index=c.index)
-    pdm.loc[(up > dn) & (up > 0)] = up
-    ndm.loc[(dn > up) & (dn > 0)] = dn
-    pdi = 100 * pdm.ewm(alpha=1/14, adjust=False).mean() / atr
-    ndi = 100 * ndm.ewm(alpha=1/14, adjust=False).mean() / atr
-    adx = (100 * abs(pdi - ndi) / (pdi + ndi + 1e-10)).ewm(alpha=1/14, adjust=False).mean()
-
-    above = c.iloc[-1] > ma.iloc[-1]
-    low_vol = vol.iloc[-1] < vol_th
-    trend = adx.iloc[-1] > adx_th
-    signal = 1 if (above and (low_vol or trend)) else 0
-
-    return {
-        'price': realtime_price,
-        'ma': round(float(ma.iloc[-1]), 4),
-        'vol': round(float(vol.iloc[-1]), 1),
-        'adx': round(float(adx.iloc[-1]), 1),
-        'above_ma': above,
-        'low_vol': low_vol,
-        'trend': trend,
-        'signal': signal,
-    }
-
-
-def get_qvix():
-    """获取QVIX恐慌指数"""
-    try:
-        import akshare as ak
-        df = ak.index_option_300etf_qvix()
-        latest = df.iloc[-1]
-        return round(float(latest['close']), 2)
-    except Exception:
-        return None
-
-
-def qvix_position_ratio(qvix):
-    """
-    QVIX 仓位调节规则:
-    < 20: 平静, 100% 仓位
-    20-25: 正常偏紧, 80% 仓位
-    25-30: 恐慌, 60% 仓位
-    >= 30: 极度恐慌, 40% 仓位
-    """
-    if qvix is None:
-        return 1.0, '未知(按100%执行)'
-    if qvix < 20:
-        return 1.0, f'QVIX {qvix} 平静 <20'
-    elif qvix < 25:
-        return 0.8, f'QVIX {qvix} 正常偏紧 20-25'
-    elif qvix < 30:
-        return 0.6, f'QVIX {qvix} 恐慌 25-30'
-    else:
-        return 0.4, f'QVIX {qvix} 极度恐慌 >=30'
-
-
-def compute_signal_confidence(r, info):
-    """
-    信号置信度评估 (0-100)
-    强信号: 价格远离MA30 + ADX远超阈值 + 波动率安全
-    弱信号: 贴线/刚过线
-    """
-    score = 0
-    reasons = []
-
-    # 1. 价格与MA30距离 (最多30分)
-    dist = (r['price'] / r['ma'] - 1) * 100
-    if dist > 3:
-        score += 30
-        reasons.append(f'价格超MA30 {dist:.1f}%')
-    elif dist > 1.5:
-        score += 22
-        reasons.append(f'价格超MA30 {dist:.1f}%')
-    elif dist > 0.5:
-        score += 12
-        reasons.append(f'价格贴MA30 ({dist:+.1f}%)')
-    else:
-        score += 4
-        reasons.append(f'价格紧贴MA30 ({dist:+.1f}%)')
-
-    # 2. ADX 余量 (最多40分)
-    adx_margin = r['adx'] - info['adx_th']
-    if adx_margin > 10:
-        score += 40
-        reasons.append(f'ADX超阈值{adx_margin:.0f}点')
-    elif adx_margin > 5:
-        score += 30
-        reasons.append(f'ADX超阈值{adx_margin:.0f}点')
-    elif adx_margin > 0:
-        score += 18
-        reasons.append(f'ADX刚过线({r["adx"]:.1f})')
-    elif adx_margin > -5:
-        score += 8
-        reasons.append(f'ADX未过线但波动率触发')
-    else:
-        score += 2
-        reasons.append(f'ADX远离阈值({r["adx"]:.1f})')
-
-    # 3. 波动率余量 (最多30分)
-    vol_margin = info['vol_th'] - r['vol']
-    if vol_margin > 5:
-        score += 30
-        reasons.append(f'波动率低({r["vol"]:.1f}%)')
-    elif vol_margin > 2:
-        score += 22
-        reasons.append(f'波动率安全({r["vol"]:.1f}%)')
-    elif vol_margin > 0:
-        score += 12
-        reasons.append(f'波动率贴线({r["vol"]:.1f}%)')
-    else:
-        score += 4
-        reasons.append(f'波动率超标({r["vol"]:.1f}%)')
-
-    if score >= 75:
-        level = '强'
-    elif score >= 50:
-        level = '中'
-    else:
-        level = '弱'
-
-    return score, level, reasons
+    return last_signal_state(c, h, l, info['ma_p'], info['adx_th'], info['vol_th'])
 
 
 def main():
@@ -212,8 +91,11 @@ def main():
             continue
         df = get_latest_ohlc(code)
         r = compute_current_signal(df, quotes[code]['price'], info)
+        r['brake_w'] = vol_brake_weight(r['vol'])
         # 置信度评估
-        conf_score, conf_level, conf_reasons = compute_signal_confidence(r, info)
+        conf_score, conf_level, conf_reasons = compute_confidence(
+            r['price'], r['ma'], r['adx'], r['vol'], info
+        )
         r['conf_score'] = conf_score
         r['conf_level'] = conf_level
         r['conf_reasons'] = conf_reasons
@@ -224,28 +106,36 @@ def main():
     print('=' * 62)
     print(f"  {now.strftime('%Y-%m-%d')} 三品种轮动快照 ({'盘中' if mode=='mid' else '收盘'})")
     print('=' * 62)
-    print(f"  {'品种':<12} {'实时价':>8} {'MA30':>8} {'ADX':>6} {'波动':>6} {'信号':>6} {'置信':>5}")
+    print(f"  {'品种':<12} {'实时价':>8} {'MA30':>8} {'ADX':>6} {'波动':>6} {'信号':>6} {'确认':>6} {'置信':>5}")
     print('  ' + '-' * 70)
-    for code in ['510310', '159995', '512800']:
+    for code in ORDER:
         if code not in results:
             continue
         r = results[code]
         sig_txt = '持有' if r['signal'] else '空仓'
+        conf_flag = ('已确认' if r.get('confirmed') == 1 else '待确认') if r['signal'] else '-'
         conf_txt = r['conf_level'] if r['signal'] else '-'
-        print(f"  {ASSETS[code]['name']:<10} {r['price']:>8.4f} {r['ma']:>8.4f} {r['adx']:>6.1f} {r['vol']:>5.1f}%  {sig_txt:>4}  {conf_txt:>3}")
+        vol_txt = f"{r['vol']:>5.1f}%" + ('刹车' if r.get('brake_w', 1.0) < 1 else '')
+        print(f"  {ASSETS[code]['name']:<10} {r['price']:>8.4f} {r['ma']:>8.4f} {r['adx']:>6.1f} {vol_txt}  {sig_txt:>4}  {conf_flag:>4}  {conf_txt:>3}")
 
-    # 轮动指向
-    candidates = [(code, results[code]['adx']) for code in results if results[code]['signal'] == 1]
+    # 轮动指向 (新入场需连续2日确认)
+    candidates = [(code, results[code]['adx']) for code in results
+                  if results[code]['signal'] == 1 and results[code].get('confirmed') == 1]
     if candidates:
         candidates.sort(key=lambda x: x[1], reverse=True)
         pick = candidates[0][0]
         print(f"\n  >>> 轮动指向: {ASSETS[pick]['name']} ({pick}) <<<")
     else:
         pick = None
-        print(f"\n  >>> 轮动指向: 国债/逆回购 (无品种符合) <<<")
+        first_day = [c for c, r in results.items() if r['signal'] == 1 and r.get('confirmed') == 0]
+        if first_day:
+            names = '、'.join(ASSETS[c]['name'] for c in first_day)
+            print(f"\n  >>> {names} 信号首日待确认(明日仍持有信号才可买入), 当前指向: 国债/逆回购 <<<")
+        else:
+            print(f"\n  >>> 轮动指向: 国债/逆回购 (无品种符合) <<<")
 
     # QVIX 仓位调节
-    qvix = get_qvix()
+    qvix = fetch_qvix()
     ratio, qvix_note = qvix_position_ratio(qvix)
     print()
     print('  --- QVIX 仓位调节 ---')
@@ -263,35 +153,33 @@ def main():
         print('  ' + '=' * 58)
         print('  【下午操作建议】')
         print('  ' + '=' * 58)
-        # 判断是否有持仓
-        position_file = os.path.join(PROJECT_ROOT, 'trades')
-        holding = {}
-        for code in ASSETS:
-            f = os.path.join(position_file, f'{code}_trades.csv')
-            if os.path.exists(f):
-                try:
-                    df_pos = pd.read_csv(f)
-                    shares = 0
-                    for _, row in df_pos.iterrows():
-                        a = str(row['action']).strip().upper()
-                        sh = int(row['shares'])
-                        shares += sh if a == 'BUY' else -sh
-                    if shares > 0:
-                        holding[code] = shares
-                except Exception:
-                    pass
+        # 判断是否有持仓 (统一委托 signal_core, 与 send_advice 同源)
+        holdings_all = holdings_from_trades(os.path.join(PROJECT_ROOT, 'trades'), list(ASSETS))
+        holding = {c: s for c, s in holdings_all.items() if s > 0}
+        for c, s in holdings_all.items():
+            if s < 0:
+                print(f'  [WARN] {c} 持仓计算为负({s}), 请检查 {c}_trades.csv')
 
         if pick:
             asset_name = ASSETS[pick]['name']
             conf = results[pick]['conf_level']
             conf_score = results[pick]['conf_score']
+            bw = results[pick].get('brake_w', 1.0)
             if pick in holding:
-                print(f'  [持有中] {asset_name}: 信号仍持有(置信{conf}), 下午继续持有, 无操作')
+                if bw < 1.0:
+                    print(f'  [减仓] {asset_name}: 波动率{results[pick]["vol"]:.1f}%>{VOL_BRAKE_THRESHOLD}%, '
+                          f'建议减至{bw:.0%}仓位 (波动刹车)')
+                else:
+                    print(f'  [持有中] {asset_name}: 信号仍持有(置信{conf}), 下午继续持有, 无操作')
+            elif results[pick].get('confirmed') == 0:
+                print(f'  [观察] {asset_name}: 信号首日, 需连续2日确认, 下午不追; 明日若信号仍在则可建仓')
             else:
+                pct = int(ratio * bw * 100)
                 if conf == '强':
-                    print(f'  [建仓] {asset_name}: 强信号(置信{conf_score}分), 下午可果断建仓 {int(ratio*100)}%仓位')
+                    print(f'  [建仓] {asset_name}: 强信号(置信{conf_score}分), 下午可果断建仓 {pct}%仓位'
+                          + ('' if bw >= 1 else f' (含波动刹车{bw:.0%})'))
                 elif conf == '中':
-                    print(f'  [分批建仓] {asset_name}: 中等信号(置信{conf_score}分), 下午建仓一半, 收盘确认后再加')
+                    print(f'  [分批建仓] {asset_name}: 中等信号(置信{conf_score}分), 下午建仓{pct // 2}%仓位, 收盘确认后再加')
                 else:
                     print(f'  [观察] {asset_name}: 弱信号(置信{conf_score}分), 贴线状态, 下午不追, 等收盘确认')
         else:

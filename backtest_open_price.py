@@ -1,6 +1,8 @@
 """
 开盘价执行回测 vs 收盘价回测对比
-信号在T日收盘生成 → T+1日以开盘价买入/卖出
+信号由T日收盘计算 → T+1以当日开盘价买入/卖出
+
+⚠️【一次性研究脚本 / v1 口径】基于 csi300_data.duckdb 指数数据; 现行口径回测见 validate_tier1.py。
 """
 import pandas as pd
 import numpy as np

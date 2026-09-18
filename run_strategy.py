@@ -1,7 +1,11 @@
 """
-沪深300 ETF 策略执行器
-每天收盘后运行，生成交易信号
+沪深300 ETF 策略执行器 (v1 单品种 510310 口径)
+
+⚠️【已废弃】生产流程为 auto_refresh.py + send_advice.py (三品种轮动 MA30/2日确认/QVIX),
+   本脚本输出与生产信号不一致, 勿用于实盘决策。
 """
+import warnings
+warnings.warn("run_strategy.py 已废弃 (v1 单品种口径), 实盘请用 auto_refresh.py/send_advice.py", DeprecationWarning, stacklevel=2)
 
 import pandas as pd
 import numpy as np

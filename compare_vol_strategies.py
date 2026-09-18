@@ -1,5 +1,6 @@
 """
-对比回测：固定阈值15% vs 相对波动率（滚动1年均值）
+对比回测：固定阈值15% vs 相对波动率（滞后1年阈值）
+⚠️【一次性研究脚本 / v1 口径】现行波动率规则为 品种阈值+极端刹车 (见 config/signal_core)。
 """
 import pandas as pd
 import numpy as np

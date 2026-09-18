@@ -1,27 +1,24 @@
 """
-信号有效性验证 + 策略重新评估
-基于 trading_history.duckdb 完整历史数据
+信号有效性验证 + 策略重新评估 (一次性研究脚本, 不参与生产流程)
+基于 trading_history.duckdb 完整历史数据; 品种池/参数以 config.ASSETS (生产口径) 为准
 1. 买入信号后未来 5/10/20 天收益统计
-2. 触发条件分组对比 (ADX>25 vs 低波动)
+2. 触发条件分组对比 (ADX触发 vs 低波动)
 3. 全历史回测 (开盘价执行)
 4. 参数敏感性分析
 """
 import pandas as pd
 import numpy as np
 import os
+import sys
 import duckdb
 from datetime import datetime
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, PROJECT_ROOT)
+from config import ASSETS as POOL
 HISTORY_DB = os.path.join(PROJECT_ROOT, 'trading_history.duckdb')
 RF = 0.025
 BOND_DAILY = (1 + RF) ** (1/252) - 1
-
-ASSETS = {
-    '510310': '沪深300ETF',
-    '159995': '芯片ETF',
-    '512660': '军工ETF',
-}
 
 
 def load_ohlc(conn, code):
@@ -87,7 +84,7 @@ def signal_effectiveness(df, signal, label):
     return
 
 
-def trigger_comparison(df, sig_info, label):
+def trigger_comparison(df, sig_info, label, adx_th=25):
     """按触发条件分组"""
     c = df['close']; o = df['open']
     signal = sig_info['signal']
@@ -97,7 +94,7 @@ def trigger_comparison(df, sig_info, label):
     sig = signal.values
 
     groups = {
-        'ADX>25 触发': (sig == 1) & trend,
+        f'ADX>{adx_th} 触发': (sig == 1) & trend,
         '低波动触发': (sig == 1) & low_vol & ~trend,
     }
 
@@ -186,18 +183,20 @@ def main():
 
     conn = duckdb.connect(HISTORY_DB)
 
-    for code, name in ASSETS.items():
+    for code, info in POOL.items():
+        name = info['name']
         df = load_ohlc(conn, code)
         if len(df) < 200:
             print(f'\n{name} 数据不足: {len(df)}')
             continue
         print(f'\n{"#"*70}')
         print(f'  # {name} ({code})  {df["date"].min().date()} ~ {df["date"].max().date()}  {len(df)}条')
+        print(f'  # 生产参数: MA{info["ma_p"]} / ADX>{info["adx_th"]} / Vol<{info["vol_th"]}%')
         print(f'{"#"*70}')
 
-        signal, sig_info = compute_signal(df)
+        signal, sig_info = compute_signal(df, ma_p=info['ma_p'], adx_th=info['adx_th'], vol_th=info['vol_th'])
         signal_effectiveness(df, signal, name)
-        trigger_comparison(df, sig_info, name)
+        trigger_comparison(df, sig_info, name, adx_th=info['adx_th'])
         full_backtest(df, signal, name)
         param_sensitivity(df, name)
 

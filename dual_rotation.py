@@ -1,5 +1,5 @@
 """
-多品种轮动信号系统: 510310 + 159995 + 512660
+多品种轮动信号系统: 510310 + 159995 + 512800
 对每个品种独立运行 ADX Override，择优持仓
 """
 import pandas as pd
@@ -10,26 +10,21 @@ import duckdb
 from datetime import datetime, timedelta
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(PROJECT_ROOT, 'csi300_data.duckdb')
-RF = 0.025
-
-ASSETS = {
-    '510310': {'name': '沪深300ETF', 'code': 'sh510310', 'ma_p': 30, 'adx_th': 20, 'vol_th': 18},
-    '159995': {'name': '芯片ETF',    'code': 'sz159995', 'ma_p': 30, 'adx_th': 25, 'vol_th': 15},
-    '512800': {'name': '银行ETF',    'code': 'sh512800', 'ma_p': 30, 'adx_th': 25, 'vol_th': 18},
-}
+sys.path.insert(0, PROJECT_ROOT)
+from config import ASSETS, HISTORY_DB
+from signal_core import compute_signal_core, vol_brake_weight
 
 def ensure_all_data():
-    """确保所有品种数据在库中"""
+    """确保三品种日线数据在历史库 daily_ohlc 中 (缺失时从新浪下载并入库)"""
     for asset_id, info in ASSETS.items():
-        conn = duckdb.connect(DB_PATH)
-        tbl = f'etf_{asset_id}_daily'
+        conn = duckdb.connect(HISTORY_DB)
         try:
-            conn.execute(f'SELECT 1 FROM {tbl} LIMIT 1').fetchone()
-            conn.close()
-            continue
+            n = conn.execute('SELECT COUNT(*) FROM daily_ohlc WHERE code = ?', [asset_id]).fetchone()[0]
         except Exception:
-            conn.close()
+            n = 0
+        conn.close()
+        if n > 0:
+            continue
 
         print(f'下载 {info["name"]} ({asset_id}) 历史数据...')
         try:
@@ -39,90 +34,94 @@ def ensure_all_data():
             cutoff = pd.Timestamp.now() - pd.DateOffset(years=5)
             df = df[df['date'] >= cutoff].sort_values('date')
             df = df[["date","open","high","low","close","volume","amount"]].dropna(subset=["close"])
-            
-            # Split detection
+
+            # Split detection (循环检测, 支持多次拆分)
             c = df['close'].values
-            for i in range(1, len(c)):
+            i = 1
+            while i < len(c):
                 if c[i] > 0 and c[i-1] > 0 and c[i-1] / c[i] > 1.8:
                     ratio = round(c[i-1] / c[i])
                     for col in ["open","high","low","close"]:
                         df.loc[df.index[:i], col] = df.loc[df.index[:i], col] / ratio
-                    break
-            
-            conn = duckdb.connect(DB_PATH)
-            conn.execute(f'DROP TABLE IF EXISTS {tbl}')
-            conn.execute(f'CREATE TABLE {tbl} (date DATE, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE, amount DOUBLE)')
-            conn.execute(f'INSERT INTO {tbl} SELECT * FROM df')
+                    c = df['close'].values
+                i += 1
+
+            rows = []
+            for _, r in df.iterrows():
+                rows.append((
+                    r['date'].date(), asset_id, info['name'],
+                    float(r.get('open', 0)), float(r.get('high', 0)),
+                    float(r.get('low', 0)), float(r.get('close', 0)),
+                    float(r.get('volume', 0)), float(r.get('amount', 0)),
+                ))
+            conn = duckdb.connect(HISTORY_DB)
+            conn.executemany('INSERT OR REPLACE INTO daily_ohlc VALUES (?,?,?,?,?,?,?,?,?)', rows)
             conn.close()
+            print(f'  入库 {len(rows)} 条')
         except Exception as e:
             print(f'  下载失败: {e}')
 
 
-def compute_adx_signal(df, ma_p=30, adx_p=14, vol_p=20, vol_th=18, adx_th=20):
-    """对单个ETF计算ADX Override信号 (参数可配置)"""
-    close = df['close']
-    high = df['high']
-    low = df['low']
-    ma = close.rolling(ma_p).mean()
-    vol = close.pct_change().rolling(vol_p).std() * np.sqrt(252) * 100
-    tr1 = high - low
-    tr2 = abs(high - close.shift(1))
-    tr3 = abs(low - close.shift(1))
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/adx_p, adjust=False).mean()
-    up = high.diff(); dn = -low.diff()
-    p_dm = pd.Series(0.0, index=df.index); n_dm = pd.Series(0.0, index=df.index)
-    p_dm.loc[(up > dn) & (up > 0)] = up
-    n_dm.loc[(dn > up) & (dn > 0)] = dn
-    pdi = 100 * p_dm.ewm(alpha=1/adx_p, adjust=False).mean() / atr
-    ndi = 100 * n_dm.ewm(alpha=1/adx_p, adjust=False).mean() / atr
-    adx = (100 * abs(pdi - ndi) / (pdi + ndi + 1e-10)).ewm(alpha=1/adx_p, adjust=False).mean()
-    above = close > ma
-    low_vol = vol < vol_th
-    trend = adx > adx_th
-    signal = (above & (low_vol | trend)).astype(int)
+def compute_adx_signal(df, ma_p=30, vol_th=18, adx_th=20):
+    """对单个ETF计算ADX Override信号 (参数可配置, 委托给 signal_core)"""
+    c = df['close']
+    h = df['high']
+    l = df['low']
+    r = compute_signal_core(c, h, l, ma_p=ma_p, adx_th=adx_th, vol_th=vol_th)
     return {
-        'close': close, 'ma50': ma, 'vol': vol, 'adx': adx, 'signal': signal,
-        'last_close': close.iloc[-1], 'last_ma50': ma.iloc[-1],
-        'last_vol': vol.iloc[-1], 'last_adx': adx.iloc[-1],
+        'close': c, 'ma30': r['ma'], 'vol': r['vol'], 'adx': r['adx'], 'signal': r['signal'],
+        'last_close': c.iloc[-1], 'last_ma30': r['ma'].iloc[-1],
+        'last_vol': r['vol'].iloc[-1], 'last_adx': r['adx'].iloc[-1],
+        'last_confirmed': r['confirmed'].iloc[-1],
         'ma_p': ma_p, 'adx_th': adx_th, 'vol_th': vol_th,
     }
 
 
 def get_rotation_signals():
-    """获取所有品种信号并给出轮动指向"""
+    """获取所有品种信号并给出轮动指向 (读每日更新的历史库, 与邮件同源)"""
     ensure_all_data()
-    
+
     results = {}
-    conn = duckdb.connect(DB_PATH)
+    conn = duckdb.connect(HISTORY_DB)
     for asset_id, info in ASSETS.items():
-        tbl = f'etf_{asset_id}_daily'
         try:
-            df = conn.execute(f'SELECT date, open, high, low, close FROM {tbl} ORDER BY date').fetchdf()
+            df = conn.execute(
+                f"SELECT date, open, high, low, close FROM daily_ohlc WHERE code = '{asset_id}' ORDER BY date"
+            ).fetchdf()
+            if df.empty:
+                continue
             df['date'] = pd.to_datetime(df['date'])
             r = compute_adx_signal(df, ma_p=info.get('ma_p', 30), adx_th=info.get('adx_th', 20), vol_th=info.get('vol_th', 18))
             results[asset_id] = {
                 'name': info['name'],
                 'price': r['last_close'],
-                'ma50': r['last_ma50'],
+                'ma30': r['last_ma30'],
                 'vol': r['last_vol'],
                 'adx': r['last_adx'],
-                'signal': int(r['signal'].iloc[-2]),  # yesterday's signal
+                # 最新一根K线的收盘信号 (T日收盘信号, T+1开盘执行)
+                'signal': int(r['signal'].iloc[-1]),
+                'confirmed': int(r['last_confirmed']),
+                'date': str(df['date'].iloc[-1].date()),
             }
         except Exception:
             pass
     conn.close()
-    
-    # 轮动逻辑：选有信号中ADX最高的
-    candidates = [(k, v) for k, v in results.items() if v['signal'] == 1]
+
+    # 轮动逻辑：在"已确认信号"的品种中选ADX最高的 (新入场需连续2日确认)
+    candidates = [(k, v) for k, v in results.items() if v['signal'] == 1 and v['confirmed'] == 1]
     if len(candidates) >= 2:
         candidates.sort(key=lambda x: x[1]['adx'], reverse=True)
     pick = candidates[0][0] if candidates else None
-    
+
+    latest_date = ''
+    for v in results.values():
+        if v.get('date'):
+            latest_date = max(latest_date, v['date'])
+
     return {
         'assets': results,
         'pick': pick,
-        'date': list(results.values())[0]['price'] if results else '',
+        'date': latest_date,
     }
 
 
@@ -133,18 +132,26 @@ if __name__ == '__main__':
     print(f"\n{'='*60}")
     print(f"  多品种轮动信号 ({sigs.get('date','')})")
     print(f"{'='*60}")
-    print(f"  {'品种':<15} {'价格':>8} {'MA50':>8} {'ADX':>7} {'信号':>6}")
-    
+    print(f"  {'品种':<15} {'价格':>8} {'MA30':>8} {'ADX':>7} {'信号':>6} {'确认':>6}")
+
     for code in ASSETS:
         s = sigs['assets'].get(code, {})
         if not s:
             continue
         sig_text = '持有' if s['signal'] == 1 else '空仓'
-        print(f"  {s['name']:<15} {s['price']:>8.4f} {s['ma50']:>8.4f} {s['adx']:>6.1f} {sig_text:>6}")
-    
+        conf_text = ('已确认' if s['confirmed'] == 1 else '待确认') if s['signal'] == 1 else '-'
+        print(f"  {s['name']:<15} {s['price']:>8.4f} {s['ma30']:>8.4f} {s['adx']:>6.1f} {sig_text:>6} {conf_text:>6}")
+
     pick = sigs['pick']
     if pick:
         name = ASSETS[pick]['name']
-        print(f"\n  >>> 轮动指向: {name} ({pick}) <<<")
+        s = sigs['assets'][pick]
+        bw = vol_brake_weight(s['vol'])
+        extra = f' (波动刹车: 仓位上限{bw:.0%}, vol {s["vol"]:.1f}%)' if bw < 1 else ''
+        print(f"\n  >>> 轮动指向: {name} ({pick}){extra} <<<")
     else:
-        print(f"\n  >>> 轮动指向: 国债/逆回购 (无品种符合) <<<")
+        first_day = [v for v in sigs['assets'].values() if v['signal'] == 1 and v['confirmed'] == 0]
+        if first_day:
+            print(f"\n  >>> 信号首日待确认 (连续第2日才可买入), 暂指向: 国债/逆回购 <<<")
+        else:
+            print(f"\n  >>> 轮动指向: 国债/逆回购 (无品种符合) <<<")

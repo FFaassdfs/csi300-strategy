@@ -1,33 +1,33 @@
 """
-全量历史数据填充 + 历史信号重算
-1. 从 akshare 拉取各品种全部历史 (不截断5年)
-2. 拆分复权处理
+全量历史数据填充 + 历史信号重算 (与生产 auto_refresh/signal_core 完全一致, 2026-09-10 重写)
+1. 从 akshare 拉取 config.ASSETS 各品种全部历史 (自上市起, 不截断5年) + CSI300指数
+2. 拆分复权处理 (支持多次拆分)
 3. 填充到 trading_history.duckdb
-4. 重算全部历史的指标与信号 (形成完整历史信号轨迹)
+4. 用 signal_core 重算全部历史指标与信号
+   - 信号归属日期 = 数据日期 T (T日收盘信号, 供 T+1 开盘执行), 与 auto_refresh 相同语义
+   - reason 文案与 auto_refresh/signals_log 一致
 
 用法: python backfill_history.py
 """
 import pandas as pd
 import numpy as np
 import os
+import sys
 import duckdb
 from datetime import datetime
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-HISTORY_DB = os.path.join(PROJECT_ROOT, 'trading_history.duckdb')
+sys.path.insert(0, PROJECT_ROOT)
+from config import ASSETS, HISTORY_DB
+from signal_core import compute_signal_core, VOL_BRAKE_THRESHOLD
 
-ASSETS = {
-    '000300': {'name': '沪深300指数', 'code': 'sh000300', 'is_index': True},
-    '510310': {'name': '沪深300ETF', 'code': 'sh510310', 'is_index': False},
-    '159995': {'name': '芯片ETF',    'code': 'sz159995', 'is_index': False},
-    '512660': {'name': '军工ETF',    'code': 'sh512660', 'is_index': False},
-}
+INDEX_ASSET = {'000300': {'name': '沪深300指数', 'code': 'sh000300', 'is_index': True}}
 
 
 def fetch_full_history(info):
-    """拉取全部历史"""
+    """拉取全部历史 (支持多次拆分检测)"""
     import akshare as ak
-    if info['is_index']:
+    if info.get('is_index'):
         df = ak.stock_zh_index_daily(symbol=info['code'])
         df['date'] = pd.to_datetime(df['date'])
         df = df[['date', 'open', 'high', 'low', 'close']].dropna().sort_values('date')
@@ -38,16 +38,17 @@ def fetch_full_history(info):
         df['date'] = pd.to_datetime(df['date'])
         df = df[['date', 'open', 'high', 'low', 'close', 'volume', 'amount']].dropna(subset=['close']).sort_values('date')
 
-        # 拆分复权
-        c = df['close'].values
+        # 拆分复权 (循环检测, 支持多次拆分)
         splits = []
-        for i in range(1, len(c)):
+        i = 1
+        while i < len(df):
+            c = df['close'].values
             if c[i] > 0 and c[i-1] > 0 and c[i-1] / c[i] > 1.8:
                 ratio = round(c[i-1] / c[i])
                 splits.append((str(df['date'].iloc[i].date()), ratio))
                 for col in ['open', 'high', 'low', 'close']:
                     df.loc[df.index[:i], col] = df.loc[df.index[:i], col] / ratio
-                c = df['close'].values
+            i += 1
 
         if splits:
             print(f'    [SPLIT] {info["name"]}: {splits}')
@@ -68,10 +69,19 @@ def upsert_ohlc(conn, code, name, df):
     return len(rows)
 
 
-def recompute_indicators(conn):
-    """对每个品种全历史重算指标与信号, 写入 indicators + signals_log"""
-    from datetime import timedelta
+def _reason(above, low_v, trend, sig, conf_v, vol_v, adx_th):
+    if sig == 1:
+        base = f'ADX>{adx_th}' if trend else ('低波动' if low_v else '价格>MA')
+        r = base + ('/2日确认' if conf_v else '/首日待确认')
+        if vol_v > VOL_BRAKE_THRESHOLD:
+            r += '/波动刹车'
+        return r
+    return '价格<MA' if not above else ('高波动+低趋势' if not low_v and not trend else '')
 
+
+def recompute_indicators(conn):
+    """对 config.ASSETS 各品种全历史重算指标与信号 (统一走 signal_core)
+    与 auto_refresh.compute_and_log_signals 同语义: 信号记在数据日期 T, 存 T 日价格"""
     for code, info in ASSETS.items():
         df = conn.execute(
             f"SELECT date, open, high, low, close FROM daily_ohlc WHERE code = '{code}' ORDER BY date"
@@ -79,75 +89,57 @@ def recompute_indicators(conn):
         if len(df) < 60:
             continue
 
-        c = df['close']; h = df['high']; l = df['low']
-        ma50 = c.rolling(50).mean()
-        vol = c.pct_change().rolling(20).std() * np.sqrt(252) * 100
+        c = df['close'].astype(float); h = df['high'].astype(float); l = df['low'].astype(float)
+        core = compute_signal_core(c, h, l, ma_p=info['ma_p'], adx_th=info['adx_th'], vol_th=info['vol_th'])
+        ma = core['ma']; vol = core['vol']; adx = core['adx']; signal = core['signal']; confirmed = core['confirmed']
         momentum = c / c.shift(20) - 1
-
-        tr1 = h - l
-        tr2 = abs(h - c.shift(1))
-        tr3 = abs(l - c.shift(1))
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.ewm(alpha=1/14, adjust=False).mean()
-        up = h.diff(); dn = -l.diff()
-        pdm = pd.Series(0.0, index=df.index); ndm = pd.Series(0.0, index=df.index)
-        pdm.loc[(up > dn) & (up > 0)] = up
-        ndm.loc[(dn > up) & (dn > 0)] = dn
-        pdi = 100 * pdm.ewm(alpha=1/14, adjust=False).mean() / atr
-        ndi = 100 * ndm.ewm(alpha=1/14, adjust=False).mean() / atr
-        adx = (100 * abs(pdi - ndi) / (pdi + ndi + 1e-10)).ewm(alpha=1/14, adjust=False).mean()
 
         bb_mid = c.rolling(20).mean()
         bb_std = c.rolling(20).std()
         bb_pct_b = (c - (bb_mid - 2*bb_std)) / ((bb_mid + 2*bb_std) - (bb_mid - 2*bb_std) + 1e-10)
 
-        above_ma50 = (c > ma50).astype(int)
-        low_vol = (vol < 15).astype(int)
-        strong_trend = (adx > 25).astype(int)
-        signal = (above_ma50 & (low_vol | strong_trend)).astype(int)
-
-        # 写指标 (从第50天开始)
         ind_rows = []
         sig_rows = []
-        for i in range(50, len(df)):
+        for i in range(len(df)):
+            ma_i = ma.iloc[i]; vol_i = vol.iloc[i]; adx_i = adx.iloc[i]
+            mom_i = momentum.iloc[i]; bb_i = bb_pct_b.iloc[i]
+            above_v = bool(c.iloc[i] > ma_i) if not pd.isna(ma_i) else False
+            low_v = bool(vol_i < info['vol_th']) if not pd.isna(vol_i) else False
+            trend_v = bool(adx_i > info['adx_th']) if not pd.isna(adx_i) else False
+            sig_v = int(signal.iloc[i])
+            conf_v = int(confirmed.iloc[i])
             d = df['date'].iloc[i].date()
             ind_rows.append((
                 d, code,
-                round(float(ma50.iloc[i]), 6) if not pd.isna(ma50.iloc[i]) else None,
-                round(float(adx.iloc[i]), 6) if not pd.isna(adx.iloc[i]) else None,
-                round(float(vol.iloc[i]), 6) if not pd.isna(vol.iloc[i]) else None,
-                round(float(momentum.iloc[i]), 6) if not pd.isna(momentum.iloc[i]) else None,
-                round(float(bb_pct_b.iloc[i]), 6) if not pd.isna(bb_pct_b.iloc[i]) else None,
-                bool(above_ma50.iloc[i]), bool(low_vol.iloc[i]), bool(strong_trend.iloc[i]),
-                int(signal.iloc[i])
+                round(float(ma_i), 6) if not pd.isna(ma_i) else None,
+                round(float(adx_i), 6) if not pd.isna(adx_i) else None,
+                round(float(vol_i), 6) if not pd.isna(vol_i) else None,
+                round(float(mom_i), 6) if not pd.isna(mom_i) else None,
+                round(float(bb_i), 6) if not pd.isna(bb_i) else None,
+                above_v, low_v, trend_v, sig_v
             ))
-            # 信号日志: 用 T 日收盘算出的信号, 记录为 T+1 操作建议
-            if i < len(df) - 1:
-                sig_rows.append((
-                    df['date'].iloc[i+1].date(), code, info['name'],
-                    round(float(c.iloc[i+1]), 6), int(signal.iloc[i]),
-                    _reason(above_ma50.iloc[i], low_vol.iloc[i], strong_trend.iloc[i], int(signal.iloc[i]))
-                ))
+            sig_rows.append((
+                d, code, info['name'],
+                round(float(c.iloc[i]), 6), sig_v,
+                _reason(above_v, low_v, trend_v, sig_v, conf_v,
+                        float(vol_i) if not pd.isna(vol_i) else 0.0, info['adx_th'])
+            ))
 
         conn.executemany('INSERT OR REPLACE INTO daily_indicators VALUES (?,?,?,?,?,?,?,?,?,?,?)', ind_rows)
         conn.executemany('INSERT OR REPLACE INTO signals_log VALUES (?,?,?,?,?,?)', sig_rows)
         print(f'  {info["name"]} ({code}): 指标 {len(ind_rows)} 条, 信号 {len(sig_rows)} 条')
 
 
-def _reason(above, low_v, trend, sig):
-    if sig == 1:
-        return 'ADX>25' if trend else ('低波动' if low_v else '价格>MA50')
-    return '价格<MA50' if not above else '高波动+低趋势'
-
-
 def main():
     print('=' * 60)
-    print('  全量历史数据填充')
+    print('  全量历史数据填充 (signal_core 统一口径)')
     print('=' * 60)
 
     conn = duckdb.connect(HISTORY_DB)
 
-    for code, info in ASSETS.items():
+    all_assets = dict(INDEX_ASSET)
+    all_assets.update(ASSETS)
+    for code, info in all_assets.items():
         print(f'\n拉取 {info["name"]} ({code})...')
         try:
             df = fetch_full_history(info)
@@ -165,9 +157,9 @@ def main():
     print('  完成! 验证:')
     print('=' * 60)
     vconn = duckdb.connect(HISTORY_DB)
-    print(vconn.execute("SELECT code, COUNT(*) cnt, MIN(date) start, MAX(date) end FROM daily_ohlc GROUP BY code ORDER BY code").fetchdf().to_string())
+    print(vconn.execute('SELECT code, COUNT(*) cnt, MIN(date) AS "start", MAX(date) AS "end" FROM daily_ohlc GROUP BY code ORDER BY code').fetchdf().to_string())
     print()
-    print(vconn.execute("SELECT COUNT(*) signals FROM signals_log").fetchdf().to_string())
+    print(vconn.execute("SELECT code, MAX(date) latest, COUNT(*) signals FROM signals_log GROUP BY code ORDER BY code").fetchdf().to_string())
     vconn.close()
 
 

@@ -1,5 +1,9 @@
 # CSI300 趋势跟踪量化策略 v2.0
 
+> ⚠️ **【已过时文档，仅历史存档】** 本文描述的是 **v1 单品种方案**（510310 + MA50/波动率15%/ADX25）。
+> 现行系统为 **三品种轮动 v2**（MA30、510310/159995/512800 各参数、入场2日确认、波动刹车、QVIX仓位），
+> 唯一权威手册：[OPERATION.md](OPERATION.md)。文中的回测数字、目录结构、每日命令均以 OPERATION.md 为准。
+
 **GitHub**: https://github.com/FFaassdfs/csi300-strategy
 
 ---

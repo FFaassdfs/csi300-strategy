@@ -1,6 +1,8 @@
 """
 综合策略回测系统
-测试 20+ 单策略 + 交叉组合，寻找最优辅助策略
+扫描 20+ 个单策略 + 组合，寻找最优增强策略
+
+⚠️【一次性研究脚本 / v1 口径】基于 csi300_data.duckdb 指数数据; 现行口径回测见 validate_tier1.py。
 """
 import pandas as pd
 import numpy as np

@@ -1,6 +1,9 @@
 """
 每日一键刷新: 登记交易 → 更新数据 → 生成报告 → 提交历史
 用法: python daily_refresh.py
+
+⚠️【已废弃, 2026-09 起】生产每日流程 = 计划任务(auto_refresh 15:10 入库 / send_advice 邮件);
+本脚本为旧交互式单品种流程, 且会向已停用的 csi300_data.duckdb 写数, 勿再使用。
 """
 import os
 import sys

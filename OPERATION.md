@@ -1,7 +1,7 @@
 # CSI300 多品种轮动量化策略 — 执行交接文档
 
 > 本文档是系统的**完整操作手册**，用于日常执行、新人/新Agent接手、故障排查。
-> 最后更新：2026-09-04
+> 最后更新：2026-09-10（一致性修复：消除重复收盘邮件、backfill 改统一口径、遗留脚本标注）
 > 项目位置：`D:\opencode\个人投资相关\hs300`
 > GitHub：https://github.com/FFaassdfs/csi300-strategy
 
@@ -78,7 +78,13 @@
   → 都没有 → 持币/逆回购
 ```
 
-### 2.5 大盘过滤（已停用，仅记录）
+### 2.5 入场确认规则（2026-09-07 采纳）
+- **入场需连续 2 日确认**：首日出信号只观察，连续第 2 日仍持有信号才可买入
+- **出场不等确认**：持仓期间信号消失立即出场（出场逻辑与以前完全相同）
+- 实现：`signal_core.py` 的 `CONFIRM_DAYS=2`，`confirmed` 字段；邮件/快照/轮动脚本已全部接入
+- 验证依据（6.4 年轮动回测，含 10bp 成本）：年化 +18.8%→+20.4%，最大回撤 -29.3%→-21.6%，交易 261→215 笔
+
+### 2.6 大盘过滤（已停用，仅记录）
 > 曾加入 CSI300 在 MA50 下方时半仓的规则，后因三品种轮动+银行防守已能覆盖，不再需要。**当前不启用**。
 
 ---
@@ -137,6 +143,9 @@ trades/512800_trades.csv  (银行)
 2. 交易记录需手动加一行 SPLIT 说明
 3. 成本价相应调整（如 0.85 拆半后成本 0.425，份额×2）
 
+> ⚠️ SPLIT / ADJUST 行的 `shares` 列填**份额增量**（如持有2000份拆分1:2后变4000份，shares填2000）。
+> 持仓计算规则：BUY=+shares，SELL=-shares，SPLIT/ADJUST=+shares，其他action跳过并告警。
+
 ---
 
 ## 五、仓位管理(QVIX)
@@ -149,7 +158,15 @@ trades/512800_trades.csv  (银行)
 | 25-30 | 恐慌 | 60% |
 | >= 30 | 极度恐慌 | 40% |
 
-### 5.2 数据验证（回测 2015-2026, 510310）
+### 5.3 极端波动刹车（2026-09-07 采纳）
+**规则：持仓品种 20 日年化波动率 > 35% → 仓位上限降至 60%；回落到 35% 以下恢复满仓**
+- 实现：`signal_core.vol_brake_weight()`（阈值/上限可调），邮件买入金额自动×刹车权重，持仓触发"减仓"指令
+- 验证（6.4年轮动回测）：年化 +20.4%→+16.0%，最大回撤 -21.6%→**-16.8%**，6.4年仅触发13次调仓
+- 2026年以来（实盘同款行情）：回撤 -21.6%→**-13.7%**，Sharpe 1.23→**1.36**
+- **与 QVIX 调节并存**：QVIX 管"市场级恐慌"，本规则管"品种级极端波动"；买入金额 = 可用资金 × QVIX比例 × 刹车权重
+- 注意：**连续**波动率目标仓位（按 vol 比例降权）是负优化（与 ADX Override 机制冲突，年化降到12%），勿采用
+
+### 5.4 QVIX 数据验证（回测 2015-2026, 510310）
 | 方案 | 年化 | Sharpe | 回撤 |
 |------|------|--------|------|
 | 无调节 | +10.2% | 0.65 | -18.2% |
@@ -167,7 +184,7 @@ trades/512800_trades.csv  (银行)
 | CSI300午间快照 | 工作日 11:35 | `intraday_signal.py mid` |
 | CSI300午间邮件 | 工作日 12:00 | `send_advice.py mid` |
 | CSI300收盘邮件 | 工作日 16:00 | `send_advice.py close` |
-| CSI300策略每日刷新 | 工作日 15:10 | `daily_close.py` (auto_refresh+邮件) |
+| CSI300策略每日刷新 | 工作日 15:10 | `daily_close.py` (仅 auto_refresh 刷新入库；**不发邮件**，邮件统一由 16:00 任务发送，2026-09-10 起修复重复发送) |
 
 ### 6.2 查看任务状态
 ```powershell
@@ -187,26 +204,40 @@ Get-ScheduledTaskInfo -TaskName "CSI300午间邮件"
 ### 7.1 目录结构
 ```
 hs300/
-├── strategies/csi300_strategies.py   # 策略核心(旧)
-├── dual_rotation.py                   # 三品种轮动信号(当前主策略)
-├── auto_refresh.py                    # 数据刷新+入库+信号(定时)
-├── send_advice.py                     # 邮件推送(午间/收盘)
-├── daily_close.py                     # 收盘全流程(定时15:10)
-├── intraday_signal.py                 # 盘中快照+置信度
-├── backfill_history.py                # 历史数据全量回填
-├── validate_signals.py                # 信号有效性验证
-├── sentiment_collector.py             # 舆情采集
-├── init_history_db.py                 # 历史库建表
-├── daily_refresh.py                   # 手动交互式刷新(旧,可弃)
-├── run_daily.bat                      # (废弃,bat编码问题)
-├── compare_bank_inclusion.py          # 银行纳入回测
-├── PROJECT_OVERVIEW.md                # 项目概述(给Hermes)
-├── OPERATION.md                       # 本文档
-├── trading_history.duckdb             # ★历史数据库(追加式,只增不删)
-├── csi300_data.duckdb                 # 工作数据库(每次重建)
-├── trades/*_trades.csv                # ★交易记录(权威持仓来源)
-├── reports/                           # 报告与日志
-└── logs/auto_refresh.log              # 运行日志
+├── config.py                            # ★品种/路径唯一权威配置(所有脚本共用)
+├── signal_core.py                       # ★信号/置信度/QVIX/波动刹车/持仓计算唯一实现(所有脚本共用)
+├── dual_rotation.py                     # 三品种轮动信号(命令行查看)
+├── auto_refresh.py                      # 数据刷新+入库+信号记录(定时15:10)
+├── daily_close.py                       # 15:10 定时入口(仅刷新入库, 不发邮件)
+├── send_advice.py                       # 邮件推送(午间12:00/收盘16:00, 轮动指令+QVIX仓位+刹车)
+├── intraday_signal.py                   # 盘中快照 mid + 置信度
+├── backfill_history.py                  # 历史全量回填+信号重算(2026-09-10起重写为统一口径)
+├── init_history_db.py                   # 历史库建表
+├── sentiment_collector.py               # 舆情采集(北向/QVIX/全球/相关性→reports/sentiment_data.json)
+├── validate_signals.py                  # 【研究】信号有效性验证(品种池/参数以 config 为准)
+├── validate_tier1.py                    # 【研究】E1-E5: walk-forward/置信桶/成本/过滤器/止损
+├── validate_expansion.py                # 【研究】品种池扩展+双动量(结论: 全部否决, 见 §11.3 #12)
+├── validate_voltarget.py                # 【研究】波动率目标仓位(结论: 仅极端刹车采纳, 见 §5.3)
+├── compare_bank_inclusion.py            # 【研究】银行纳入方式对比(结论已固化 §11.3 #1)
+├── generate_html_report.py              # 【废弃v1】HTML报告(指数MA50口径; 轮动面板已对齐生产)
+├── execute_daily.py                     # 【废弃v1】单品种终端输出
+├── run_strategy.py                      # 【废弃v1】三策略旧报告
+├── daily_refresh.py                     # 【废弃】旧交互式流程(含git提交)
+├── update_etf_510310.py                 # 【废弃】旧 csi300_data 库 ETF 取数
+├── build_db_and_backtest.py             # 【废弃v1】旧库建库+回测
+├── backtest_open_price.py               # 【研究v1】开盘执行回测对比
+├── comprehensive_backtest.py            # 【研究v1】24策略交叉回测
+├── compare_vol_strategies.py            # 【研究v1】固定vs相对波动率
+├── strategies/csi300_strategies.py      # 【废弃v1】旧三策略模块(仅旧脚本引用)
+├── run_daily.bat                        # 【废弃】bat编码问题
+├── README.md / PROJECT_OVERVIEW.md      # 文档(PROJECT_OVERVIEW 为 v1 历史快照)
+├── OPERATION.md                         # 本文档
+├── trading_history.duckdb               # ★历史数据库(追加式,只增不删; git 已忽略)
+├── csi300_data.duckdb                   # 【废弃】v1 工作数据库
+├── trades/*_trades.csv                  # ★交易记录(持仓与现金权威来源)
+│   └── archive/                         # 遗留CSV归档(不参与现金/持仓计算)
+├── reports/                             # 报告/验证md/sentiment_data.json
+└── logs/auto_refresh.log                # 运行日志
 ```
 
 ### 7.2 历史数据库表（trading_history.duckdb）
@@ -292,7 +323,7 @@ conn.execute("SELECT * FROM signals_log ORDER BY date DESC LIMIT 10").fetchdf()
 ### 10.2 数据没更新
 | 原因 | 处理 |
 |------|------|
-| 数据源(新浪)还没更新 | 等1-3小时再试, 新浪常延迟 |
+| 数据源(新浪)还没更新当日日线 | **auto_refresh 已内置备用源**: 15:00 后新浪缺当日bar时自动按 东财日线→腾讯实时 补齐 (2026-09-10)。若备用源也挂(偶发连接重置)则维持滞后, 邮件带"数据滞后"横幅提示, 稍后手动重跑 `python auto_refresh.py` |
 | auto_refresh卡死 | 杀进程 `Get-Process python | Stop-Process` 后重跑 |
 | 入库bug | 检查 auto_refresh 日志是否有 [WARN] |
 
@@ -306,7 +337,8 @@ Get-Process python* | Stop-Process -Force
 ```
 
 ### 10.5 手动全量修复
-如果历史库乱了，可重跑 backfill（会重建所有历史信号）：
+如果历史库乱了，可重跑 backfill（会按 config+signal_core 统一口径重建所有历史指标/信号；
+2026-09-10 起与生产完全一致，信号归属数据日期 T，含 512800，不再用旧 v1 参数）：
 ```powershell
 python backfill_history.py
 ```
@@ -334,6 +366,39 @@ python backfill_history.py
 3. 军工/医药/证券不适合本策略
 4. ADX Override 优势在熊市控制回撤，牛市跑不赢傻拿是正常的
 5. 回测必须用开盘价执行+信号shift(1)，避免未来函数
+6. 入场连续2日确认全面占优（2026-09-07 Tier-1验证，见 §2.5）
+7. MA±1%缓冲带 / ADX需上行 是负优化（收益大降），勿采用
+8. ATR灾难止损(2~3x)几乎不触发（MA30/ADX出场已覆盖），可选不加
+9. 置信度评分经验证**预测力有限**（Tier-1 E2：强/中/弱与未来收益无单调关系）。现行仅用于**买入节奏**（强=当日全额、中=先半仓后确认补、弱=不买），不作为收益预测变量；若后续验证节奏调整也无增益，应取消分档（见 §4.1）
+10. 成本敏感：每年约40笔交易，单边10bp吃掉约5%/年收益，预期收益请按"含成本+15~20%/年、回撤-20~-30%"规划
+11. 连续波动率目标仓位是负优化（年化20.4%→12%），只用极端波动刹车（35%/60%，见 §5.3）
+12. 品种池扩展（黄金/纳指/创业板/有色/酒）与双动量轮动均经数据否决（2026-09-07 扩展实验），勿轻率扩池
+
+---
+
+## 十二、改动记录
+
+### 2026-09-10 一致性修复（全部代码已冒烟验证）
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 消除重复收盘邮件 | `daily_close.py` | 15:10 任务原会额外发一封 close 邮件；现只刷新入库，**收盘邮件唯一由 16:00 任务发送** |
+| backfill 重写为统一口径 | `backfill_history.py` | 改用 config.ASSETS（含512800、去512660）+ signal_core；signals_log 语义改为「日期=数据日T、价格=当日收盘」（旧版记 T+1 日用 v1 参数）；支持多次拆分。**已实跑重建全历史** |
+| 历史库噪音清理 | trading_history.duckdb | 删除 signals_log 8,309 行、daily_indicators 8,311 行（000300/512660 的 v1 旧口径行）；daily_ohlc 原始行情保留 |
+| 合成K线追加规则统一 | `intraday_signal.py` + `send_advice.py` | **仅当库内无当日K线**才把实时价追加为合成K线，杜绝重复K线使指标失真 |
+| 持仓计算唯一实现 | `signal_core.py` | 新增 `position_shares_from_csv`/`holdings_from_trades`，send_advice 与 intraday 不再各写一份；get_cash 最新行 balance 缺失时告警 |
+| MA50 命名残留清理 | `dual_rotation.py`/`auto_refresh.py` | 返回键/表头/日志改 MA30（DB 列名 ma50 属 schema 不变，存的实际是 MA30 值） |
+| 遗留 v1 脚本标注废弃 | 7 个脚本 | execute_daily/run_strategy/strategies/daily_refresh/update_etf/build_db/backtest_open/comprehensive/compare_vol 加【废弃/研究】头注；execute_daily 与 run_strategy 运行时发 DeprecationWarning |
+| HTML 报告对齐 | `generate_html_report.py` | 顶部废弃横幅；轮动面板接入 confirmed（首日待确认不推荐买入）+ MA30 + 各品种阈值；该链仅供查看，实盘以邮件为准 |
+| **数据源三级兜底** | `auto_refresh.py` | 实测新浪日线收盘后滞后约至傍晚；现 15:00 后缺当日bar自动补：东财 `fund_etf_hist_em` → 腾讯 `qt.gtimg.cn` 实时OHLC（当日16:09实测生效，东财连接被重置时自动降级腾讯）。拆分检测同时改为支持多次拆分。计划任务时间无需改动 |
+| 文档同步 | README/OPERATION/AGENTS/PROJECT_OVERVIEW | README 重写为 v2；PROJECT_OVERVIEW 标记为历史快照；项目 AGENTS.md 主入口改为 auto_refresh/send_advice（原 py -3.11 generate_html_report 为误导） |
+
+### 2026-09-07 参数演化
+- 采纳入场连续2日确认（§2.5）、极端波动刹车35%/60%（§5.3）；否决 MA±1%缓冲带/ADX需上行/连续波动率目标/扩池/双动量
+
+### 交易数据已知瑕疵（按用户决定保持原样）
+- `510310_trades.csv` 各行 balance 为空（现金显示依赖全库最新日期行的 balance，当前正确来源于 512800 最后行）
+- `159995_trades.csv` 07-11 ADJUST 行 amount 3070 ≠ 2000×1.589=3178（用户核对过的对账行，不改动）
 
 ---
 

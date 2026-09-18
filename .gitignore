@@ -2,6 +2,9 @@
 *.duckdb
 *.db
 
+# 私密配置 (SMTP授权码等, 严禁上传)
+local_secrets.py
+
 # Python
 __pycache__/
 *.pyc

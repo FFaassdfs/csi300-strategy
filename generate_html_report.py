@@ -1,5 +1,11 @@
 """
 CSI300 ETF 每日策略报告 (HTML版) - 用户持仓版
+
+⚠️【已废弃 / 遗留】本报告为 v1 单品种指数口径 (MA50/波动率15%/ADX25), 与生产系统不一致:
+  - 生产信号 = 三品种轮动 (config.ASSETS + signal_core: MA30、入场连续2日确认、波动刹车、QVIX仓位)
+  - 生产每日流程 = auto_refresh.py 刷新入库 → send_advice.py 收盘邮件 / intraday_signal.py 快照
+  - 本报告"市场状态指标/主策略信号/交易建议"三节仅供查看, 实盘操作一律以收盘邮件为准
+  下方"多品种轮动信号"面板已对齐生产逻辑 (confirmed 过滤 + MA30 + 各品种参数)。
 """
 import pandas as pd
 import numpy as np
@@ -12,6 +18,7 @@ import sys
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
+from config import ASSETS, ORDER
 
 # ========== 读取舆情数据 ==========
 SENTIMENT_FILE = os.path.join(PROJECT_ROOT, 'reports', 'sentiment_data.json')
@@ -215,36 +222,44 @@ def generate_dual_signal_panel():
         return ''
 
     lines = ['<div style="margin-top:15px;background:#f0f4ff;border:2px solid #2980b9;border-radius:10px;padding:15px;">']
-    lines.append('<div style="font-weight:bold;font-size:15px;color:#1a1a2e;margin-bottom:10px;">多品种轮动信号 <span style="font-size:11px;color:#999;font-weight:normal;">(510310+159995+512800)</span></div>')
+    lines.append('<div style="font-weight:bold;font-size:15px;color:#1a1a2e;margin-bottom:10px;">多品种轮动信号 <span style="font-size:11px;color:#999;font-weight:normal;">(510310+159995+512800, 与收盘邮件同源: signal_core + 2日确认)</span></div>')
     lines.append('<table style="font-size:13px;">')
-    lines.append('<tr><th>品种</th><th>价格</th><th>MA50</th><th>波动率</th><th>ADX</th><th>信号</th></tr>')
+    lines.append('<tr><th>品种</th><th>价格</th><th>MA30</th><th>波动率</th><th>ADX</th><th>信号</th><th>确认</th></tr>')
 
-    asset_order = ['510310', '159995', '512800']
-    for code in asset_order:
+    for code in ORDER:
         s = dual_signals.get('assets', {}).get(code)
         if s is None:
             continue
+        info = ASSETS[code]
         sig = '持有' if s['signal'] == 1 else '空仓'
         sig_color = '#27ae60' if s['signal'] == 1 else '#e74c3c'
-        adx_color = '#27ae60' if s['adx'] > 25 else '#e67e22' if s['adx'] > 20 else '#999'
-        vol_color = '#e74c3c' if s['vol'] > 15 else '#27ae60'
+        conf = s.get('confirmed', 0)
+        conf_txt = '✓' if conf == 1 else ('✗待确认' if s['signal'] == 1 else '-')
+        conf_color = '#27ae60' if conf == 1 else '#e67e22'
+        adx_color = '#27ae60' if s['adx'] > info['adx_th'] else '#999'
+        vol_color = '#e74c3c' if s['vol'] > info['vol_th'] else '#27ae60'
         lines.append(f'<tr>'
-            f'<td><strong>{s["name"]}</strong></td>'
+            f'<td><strong>{s["name"]}</strong> <span style="font-size:10px;color:#999;">MA{info["ma_p"]}/ADX{info["adx_th"]}/Vol{info["vol_th"]}%</span></td>'
             f'<td>{s["price"]:.4f}</td>'
-            f'<td>{s["ma50"]:.4f}</td>'
+            f'<td>{s["ma30"]:.4f}</td>'
             f'<td style="color:{vol_color};">{s["vol"]:.1f}%</td>'
             f'<td style="color:{adx_color};">{s["adx"]:.1f}</td>'
             f'<td><span style="font-weight:bold;color:{sig_color};">{sig}</span></td>'
+            f'<td style="color:{conf_color};">{conf_txt}</td>'
             f'</tr>')
 
     lines.append('</table>')
 
-    # 轮动建议 (三品种)
+    # 轮动建议 (三品种): 与生产一致 — 新入场需"信号+连续2日确认", 多品种有信号选 ADX 最高
     candidates = []
-    for code in ['510310', '159995', '512800']:
+    pending = []
+    for code in ORDER:
         s = dual_signals.get('assets', {}).get(code, {})
         if s.get('signal') == 1:
-            candidates.append((code, s.get('adx', 0), s.get('name', code)))
+            if s.get('confirmed') == 1:
+                candidates.append((code, s.get('adx', 0), s.get('name', code)))
+            else:
+                pending.append(s.get('name', code))
     
     if len(candidates) > 1:
         candidates.sort(key=lambda x: x[1], reverse=True)
@@ -256,7 +271,7 @@ def generate_dual_signal_panel():
         reason = f'仅{candidates[0][2]}符合条件'
     else:
         chosen = 'BOND'
-        reason = '所有品种都不符合买入条件'
+        reason = ('信号首日待确认(连续2日规则), 暂不买入: ' + '/'.join(pending)) if pending else '所有品种都不符合买入条件'
 
     chosen_map = {'510310': '沪深300ETF', '159995': '芯片ETF', '512800': '银行ETF', 'BOND': '国债/逆回购'}
     chosen_name = chosen_map.get(chosen, '国债/逆回购')
@@ -587,7 +602,7 @@ html_content = f"""
     </div>
 
     <div class="section">
-        <h2>交易建议</h2>
+        <h2>交易建议 <span style="font-size:12px;color:#c0392b;">（v1 旧版指数信号，仅供参考；实盘以收盘邮件为准）</span></h2>
         <div class="recommendation">
             <h3>明日操作建议</h3>
 """

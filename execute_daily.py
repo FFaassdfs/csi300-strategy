@@ -1,7 +1,12 @@
 """
-CSI300 ETF 每日策略执行脚本
-主策略: ADX Override (价格>MA50 AND (波动率<15% OR ADX>25))
+CSI300 ETF 每日策略执行脚本 (v1 单品种 510310 口径)
+
+⚠️【已废弃】生产流程为 auto_refresh.py + send_advice.py (三品种轮动 MA30/2日确认/QVIX),
+   本脚本口径 (MA50/波动率15%/ADX25) 与生产信号不一致, 运行会写 reports/*.txt 易误导, 勿用于实盘决策。
 """
+import warnings
+warnings.warn("execute_daily.py 已废弃 (v1 单品种口径), 实盘请用 auto_refresh.py/send_advice.py", DeprecationWarning, stacklevel=2)
+
 import pandas as pd
 import numpy as np
 import os

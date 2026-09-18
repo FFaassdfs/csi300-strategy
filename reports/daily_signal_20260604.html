@@ -3,7 +3,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>CSI300 策略信号报告 2026-06-26</title>
+    <title>CSI300 策略信号报告 2026-06-04</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; color: #333; }
         .header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: white; padding: 25px; border-radius: 10px; margin-bottom: 20px; }
@@ -54,7 +54,7 @@
 <body>
     <div class="header">
         <h1>CSI300 趋势跟踪策略报告</h1>
-        <div class="subtitle">报告生成: 2026-06-26 | 指数数据: 2026-06-25</div>
+        <div class="subtitle">报告生成: 2026-06-04 | 指数数据: 2026-06-03</div>
     </div>
 
     <div class="section">
@@ -62,19 +62,19 @@
         <div class="indicator-grid">
             <div class="indicator">
                 <div class="label">沪深300指数</div>
-                <div class="value">5020.10</div>
+                <div class="value">4938.81</div>
             </div>
             <div class="indicator">
                 <div class="label">MA50均线</div>
-                <div class="value">4847.42</div>
+                <div class="value">4737.97</div>
             </div>
             <div class="indicator">
                 <div class="label">20日波动率</div>
-                <div class="value warning">23.23%</div>
+                <div class="value warning">15.99%</div>
             </div>
             <div class="indicator">
                 <div class="label">ADX趋势强度</div>
-                <div class="value ">24.26</div>
+                <div class="value success">33.19</div>
             </div>
         </div>
         <table>
@@ -82,13 +82,13 @@
                 <td><strong>价格 vs MA50:</strong></td>
                 <td><strong>✅ 在均线上方</strong></td>
                 <td><strong>20日动量:</strong></td>
-                <td>+2.28%</td>
+                <td>+1.27%</td>
             </tr>
             <tr>
                 <td><strong>波动率 vs 15%:</strong></td>
                 <td>⚠️ 偏高</td>
                 <td><strong>趋势确认:</strong></td>
-                <td>❌ 否</td>
+                <td>✅ 是</td>
             </tr>
         </table>
     </div>
@@ -99,26 +99,13 @@
         <div class="strategy-card adx" style="border-left-width: 6px; padding: 20px;">
             <div class="name" style="font-size: 18px;">ADX Override <span style="font-size:13px;color:#1a1a2e;font-weight:bold;">← 主交易信号</span></div>
             <div style="margin-top: 10px;">
-                <span class="signal bond">持有国债</span>
-                <span style="margin-left: 15px; color: #666;">触发: 高波动/低趋势</span>
+                <span class="signal csi300">持有CSI300</span>
+                <span style="margin-left: 15px; color: #666;">触发: ADX>25</span>
             </div>
             <div style="font-size: 12px; color: #666; margin-top: 8px;">
                 价格 &gt; MA50 AND (波动率 &lt; 15% OR ADX &gt; 25)
             </div>
         </div>
-
-        <div style="margin-top:15px;background:#f0f4ff;border:2px solid #2980b9;border-radius:10px;padding:15px;">
-<div style="font-weight:bold;font-size:15px;color:#1a1a2e;margin-bottom:10px;">双品种轮动信号 <span style="font-size:11px;color:#999;font-weight:normal;">(下周一起执行)</span></div>
-<table style="font-size:13px;">
-<tr><th>品种</th><th>价格</th><th>MA50</th><th>波动率</th><th>ADX</th><th>信号</th></tr>
-<tr><td><strong>沪深300ETF</strong></td><td>4.8940</td><td>4.7127</td><td style="color:#e74c3c;">22.5%</td><td style="color:#e67e22;">24.4</td><td><span style="font-weight:bold;color:#e74c3c;">空仓</span></td></tr>
-<tr><td><strong>芯片ETF</strong></td><td>3.1750</td><td>2.3385</td><td style="color:#e74c3c;">63.2%</td><td style="color:#27ae60;">37.4</td><td><span style="font-weight:bold;color:#27ae60;">持有</span></td></tr>
-</table>
-<div style="margin-top:10px;padding:8px 12px;background:white;border-radius:6px;font-size:14px;">
-<strong>轮动指向:</strong> <span style="font-size:16px;color:#1a1a2e;">芯片ETF</span>
-<span style="color:#666;margin-left:10px;">(仅芯片ETF符合条件)</span>
-</div>
-</div>
 
         <details style="margin-top: 15px;">
             <summary style="cursor: pointer; color: #666; font-size: 13px;">辅助参考信号（观察，不执行）</summary>
@@ -126,15 +113,15 @@
                 <div class="name">布林带极端超卖 <span style="font-size:11px;color:#999;font-weight:normal;">— %B < 0.2</span></div>
                 <div style="margin-top: 5px;">
                     <span class="signal" style="background: #bbb; color: white;">正常区间</span>
-                    <span style="margin-left: 10px; color: #999;">%B = 0.88</span>
+                    <span style="margin-left: 10px; color: #999;">%B = 0.71</span>
                 </div>
                 <div style="font-size: 11px; color: #999; margin-top: 5px;">%B<0.2 且价格>MA50时表示极端超卖，历史回撤仅-1.15%</div>
             </div>
-            <div class="strategy-card" style="margin-top: 8px; border-left-color: #27ae60;">
+            <div class="strategy-card" style="margin-top: 8px; border-left-color: #e67e22;">
                 <div class="name">保守信号确认 <span style="font-size:11px;color:#999;font-weight:normal;">— ADX + MACD柱>0</span></div>
                 <div style="margin-top: 5px;">
-                    <span class="signal" style="background: #27ae60; color: white;">与主信号一致</span>
-                    <span style="margin-left: 10px; color: #999;">MACD柱 = +15.44</span>
+                    <span class="signal" style="background: #e67e22; color: white;">与主信号分歧</span>
+                    <span style="margin-left: 10px; color: #999;">MACD柱 = -5.20</span>
                 </div>
                 <div style="font-size: 11px; color: #999; margin-top: 5px;">ADX+MACD柱>0为更保守的入场确认，回测Sharpe 0.73</div>
             </div>
@@ -142,93 +129,35 @@
     </div>
 
     <div class="section">
-        <h2>舆情/宏观辅助参考</h2>
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
-<div style="background:#f8f9fa;padding:12px;border-radius:8px;">
-        <strong>北向资金</strong> <span style="font-size:11px;color:#999;">N/A</span><br>
-        <span style="font-size:20px;font-weight:bold;color:#e74c3c;">+0.0亿</span>
-        <span style="color:#e74c3c;">未知</span>
-    </div>
-<div style="background:#f8f9fa;padding:12px;border-radius:8px;">
-        <strong>QVIX恐慌指数</strong> <span style="font-size:11px;color:#999;">2026-06-25</span><br>
-        <span style="font-size:20px;font-weight:bold;color:#e67e22;">21.6</span>
-        <span style="font-size:12px;color:#666;">(-1.1)</span>
-        <span style="color:#e67e22;">偏高</span>
-    </div>
-<div style="background:#f8f9fa;padding:12px;border-radius:8px;">
-        <strong>主力资金</strong> <span style="font-size:11px;color:#999;">N/A</span><br>
-        <span style="font-size:20px;font-weight:bold;color:#e74c3c;">+0.0亿</span>
-        <span style="color:#e74c3c;">未知</span>
-    </div>
-</div>
-<div style="margin-top:15px;"><strong>多品种相关性 (2年日收益)</strong></div>
-<table style="font-size:11px;margin-top:5px;"><tr><th></th>
-<th>创业板</th>
-<th>芯片</th>
-<th>上证50</th>
-<th>510300</th>
-<th>沪深300</th>
-<th>国债</th>
-</tr>
-<tr><td><strong>创业板</strong></td>
-<td style="color:#ccc;">1.0</td>
-<td style="">+0.66</td>
-<td style="color:#e74c3c;">+0.71</td>
-<td style="color:#e74c3c;">+0.89</td>
-<td style="">+0.22</td>
-<td style="color:#2980b9;">-0.28</td>
-</tr>
-<tr><td><strong>芯片</strong></td>
-<td style="">+0.66</td>
-<td style="color:#ccc;">1.0</td>
-<td style="">+0.51</td>
-<td style="">+0.62</td>
-<td style="">+0.14</td>
-<td style="color:#2980b9;">-0.22</td>
-</tr>
-<tr><td><strong>上证50</strong></td>
-<td style="color:#e74c3c;">+0.71</td>
-<td style="">+0.51</td>
-<td style="color:#ccc;">1.0</td>
-<td style="color:#e74c3c;">+0.92</td>
-<td style="">+0.25</td>
-<td style="color:#2980b9;">-0.28</td>
-</tr>
-<tr><td><strong>510300</strong></td>
-<td style="color:#e74c3c;">+0.89</td>
-<td style="">+0.62</td>
-<td style="color:#e74c3c;">+0.92</td>
-<td style="color:#ccc;">1.0</td>
-<td style="">+0.27</td>
-<td style="color:#2980b9;">-0.29</td>
-</tr>
-<tr><td><strong>沪深300</strong></td>
-<td style="">+0.22</td>
-<td style="">+0.14</td>
-<td style="">+0.25</td>
-<td style="">+0.27</td>
-<td style="color:#ccc;">1.0</td>
-<td style="color:#2980b9;">-0.07</td>
-</tr>
-<tr><td><strong>国债</strong></td>
-<td style="color:#2980b9;">-0.28</td>
-<td style="color:#2980b9;">-0.22</td>
-<td style="color:#2980b9;">-0.28</td>
-<td style="color:#2980b9;">-0.29</td>
-<td style="color:#2980b9;">-0.07</td>
-<td style="color:#ccc;">1.0</td>
-</tr>
-</table>
-<div style="font-size:10px;color:#999;margin-top:3px;">
-            <span style="color:#27ae60;">■</span>负相关(对冲) 
-            <span style="color:#2980b9;">■</span>低相关(分散) 
-            <span style="color:#e74c3c;">■</span>高相关(同步)
-        </div>
-    </div>
-
-    <div class="section">
         <h2>当前持仓（场内ETF）</h2>
-        
+        <div class="overview-container">
+            <div class="overview-card">
+                <div class="overview-title">510310 沪深300ETF</div>
+                <div class="overview-metrics">
+                    <div class="metric">
+                        <div class="metric-label">持仓成本</div>
+                        <div class="metric-value">4.7560</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">最新收盘</div>
+                        <div class="metric-value">4.8070</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">持有份额</div>
+                        <div class="metric-value">2000 份</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">持仓市值</div>
+                        <div class="metric-value">¥9,614.00</div>
+                    </div>
+                    <div class="metric metric-pnl">
+                        <div class="metric-label">浮动盈亏</div>
+                        <div class="metric-value" style="color:#27ae60;">
+                            +¥102.00 (+1.07%)
+                        </div>
+                    </div>
+                </div>
+            </div></div>
         <table class="holding-table">
             <thead>
                 <tr>
@@ -241,10 +170,17 @@
             </thead>
             <tbody>
                 
+                <tr>
+                    <td class="fund-name">510310 沪深300ETF<div class="nav"><span style="font-size:11px;color:#27ae60;">成本4.7560 | 盈亏+102.00 (+1.07%)</span></div></td>
+                    <td>4.8070</td>
+                    <td>¥9,614.00</td>
+                    <td>2000份</td>
+                    <td>100.0%</td>
+                </tr>
                 <tr class="total-row">
                     <td class="fund-name"><strong>合计</strong></td>
                     <td>-</td>
-                    <td><strong>¥0.00</strong></td>
+                    <td><strong>¥9,614.00</strong></td>
                     <td>-</td>
                     <td>100%</td>
                 </tr>
@@ -257,23 +193,23 @@
         <div class="recommendation">
             <h3>明日操作建议</h3>
 
-            <div class="action">🔴 转换为国债避险</div>
-            <div class="note">ADX Override 主策略看空</div>
+            <div class="action">✅ 继续持有沪深300</div>
+            <div class="note">ADX Override 主策略看多 | 剩余资金不足100股</div>
 
         </div>
         <div class="info-box" style="margin-top: 15px;">
             <div class="title">资金状况</div>
             <div style="display: flex; justify-content: space-between; margin-top: 8px;">
                 <div>总资金: ¥10,000.00</div>
-                <div>已持仓: ¥0.00 (0.0%)</div>
-                <div>可用: ¥10,000.00</div>
+                <div>已持仓: ¥9,614.00 (96.1%)</div>
+                <div>可用: ¥386.00</div>
             </div>
         </div>
 
         <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 15px; margin-top: 15px;">
             <div style="font-weight: bold; color: #856404; margin-bottom: 8px;">⚠️ 风险提示</div>
-            <div style="color: #856404; font-size: 13px; margin-top: 4px;">• 波动率 23.23% 略高于 15% 阈值，需谨慎操作</div>
-            <div style="color: #856404; font-size: 13px; margin-top: 4px;">• 建议保留约 ¥850 现金作为缓冲</div>
+            <div style="color: #856404; font-size: 13px; margin-top: 4px;">• 波动率 15.99% 略高于 15% 阈值，ADX>25 覆盖了这一条件</div>
+            <div style="color: #856404; font-size: 13px; margin-top: 4px;">• 建议保留约 ¥33 现金作为缓冲</div>
         </div>
     </div>
 

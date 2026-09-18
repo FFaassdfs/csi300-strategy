@@ -1,8 +1,11 @@
 """
 沪深300 策略回测系统
 1. 下载5年CSI300指数数据 → duckdb
-2. 对三个策略进行真实数据回测
+2. 基于三个策略进行真实数据回测
 3. 输出回测报告
+
+⚠️【一次性研究脚本 / v1 口径】基于 csi300_data.duckdb 指数 MA50/15%/25 旧参数,
+现行生产参数见 config.ASSETS (三品种 MA30), 回测验证请用 validate_*.py 系列。
 """
 import pandas as pd
 import numpy as np
