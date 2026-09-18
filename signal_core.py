@@ -24,6 +24,37 @@ def vol_brake_weight(vol):
     return VOL_BRAKE_CAP if vol > VOL_BRAKE_THRESHOLD else 1.0
 
 
+def adjust_splits(df, min_ratio=1.8, log=None):
+    """拆分 / 份额合并 双向复权 (所有取数脚本统一调用, 2026-09-17)
+    df: 含 date/open/high/low/close, 按日期升序 (原地修改)
+    正向拆分 (价格下跌, c[i-1]/c[i] > min_ratio): 此前价格 / ratio
+    反向合并 (价格跳升, c[i]/c[i-1] > min_ratio): 此前价格 * ratio
+      — 新浪对部分品种(如510310 于2024-09-23份额合并)不做复权, 会留下 +100% 假跳变
+    返回事件列表 [(日期, 比例, 类型)]
+    """
+    i = 1
+    events = []
+    while i < len(df):
+        c = df['close'].values
+        if c[i] > 0 and c[i - 1] > 0:
+            r_down, r_up = c[i - 1] / c[i], c[i] / c[i - 1]
+            if r_down > min_ratio:
+                ratio = round(r_down)
+                for col in ['open', 'high', 'low', 'close']:
+                    df.loc[df.index[:i], col] = df.loc[df.index[:i], col] / ratio
+                events.append((str(pd.Timestamp(df['date'].iloc[i]).date()), f'1:{ratio}', '拆分'))
+            elif r_up > min_ratio:
+                ratio = round(r_up)
+                for col in ['open', 'high', 'low', 'close']:
+                    df.loc[df.index[:i], col] = df.loc[df.index[:i], col] * ratio
+                events.append((str(pd.Timestamp(df['date'].iloc[i]).date()), f'{ratio}:1', '份额合并'))
+        i += 1
+    if log is not None:
+        for d, r, t in events:
+            log(f'  [{t}] {d} {r}')
+    return events
+
+
 def compute_signal_core(c, h, l, ma_p=30, adx_th=20, vol_th=18):
     """
     ADX Override 核心计算

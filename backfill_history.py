@@ -19,7 +19,7 @@ from datetime import datetime
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 from config import ASSETS, HISTORY_DB
-from signal_core import compute_signal_core, VOL_BRAKE_THRESHOLD
+from signal_core import compute_signal_core, VOL_BRAKE_THRESHOLD, adjust_splits
 
 INDEX_ASSET = {'000300': {'name': '沪深300指数', 'code': 'sh000300', 'is_index': True}}
 
@@ -38,20 +38,10 @@ def fetch_full_history(info):
         df['date'] = pd.to_datetime(df['date'])
         df = df[['date', 'open', 'high', 'low', 'close', 'volume', 'amount']].dropna(subset=['close']).sort_values('date')
 
-        # 拆分复权 (循环检测, 支持多次拆分)
-        splits = []
-        i = 1
-        while i < len(df):
-            c = df['close'].values
-            if c[i] > 0 and c[i-1] > 0 and c[i-1] / c[i] > 1.8:
-                ratio = round(c[i-1] / c[i])
-                splits.append((str(df['date'].iloc[i].date()), ratio))
-                for col in ['open', 'high', 'low', 'close']:
-                    df.loc[df.index[:i], col] = df.loc[df.index[:i], col] / ratio
-            i += 1
-
-        if splits:
-            print(f'    [SPLIT] {info["name"]}: {splits}')
+        # 拆分 / 份额合并 双向复权
+        ev = adjust_splits(df)
+        if ev:
+            print(f'    [复权] {info["name"]}: {ev}')
 
     return df
 

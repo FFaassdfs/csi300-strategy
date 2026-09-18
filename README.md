@@ -47,14 +47,17 @@ python send_advice.py close # 手动发收盘邮件
 - **研究/回测**：`validate_tier1.py`（walk-forward/成本/过滤器）、`validate_expansion.py`（扩池，已否决）、`validate_voltarget.py`（仓位模式，采纳极端刹车）、`validate_signals.py`、`compare_bank_inclusion.py`
 - **废弃 v1**（勿用于实盘）：`generate_html_report.py`、`execute_daily.py`、`run_strategy.py`、`strategies/`、`daily_refresh.py`、`csi300_data.duckdb` 等，详见 OPERATION.md §7.1 目录树
 
-## 关键回测数字（3 品种轮动，2020-04 ~ 2026-09，含 10bp 单边成本，见 OPERATION.md §11）
+## 关键回测数字（3 品种轮动，2020-04 ~ 2026-09，含 10bp 单边成本，修正数据后，见 OPERATION.md §11）
 
 | 方案 | 年化 | Sharpe | 最大回撤 |
 |------|------|--------|---------|
-| 现行（2日确认） | +20.4% | 0.79 | -21.6% |
-| + 极端波动刹车(35%/60%) | +16.0% | 0.75 | -16.8%（2026年以来回撤 -13.7%，Sharpe 1.36） |
+| 现行（2日确认） | +20.3% | 0.78 | -21.6% |
+| + 极端波动刹车(35%/60%) | +17.2% | 0.80 | -16.8%（2026年以来回撤 -13.7%，Sharpe 1.24） |
 
-> 基准确诊数据见 `reports/tier1_validation_20260907.md`（E3/E4）与 `reports/voltarget_validation_20260907.md`（V7）；510310 单品种全样本 Buy&Hold 年化 +13.8%（2013-2026，`reports/expansion_validation_20260907.md` E-A）。
+**长历史压力测试**（指数代理 2015-08~2026-09，覆盖 2015 股灾/2018 熊市/2022-24 长熊）：策略 **+7.7~8.7%/年、Sharpe 0.37、回撤 -24.9%**，沪深300 Buy&Hold 同期 +1.4%/年、-45.6%。危机段回撤控制显著（2015 第二轮 -7.8% vs 指数 -25.4%；2018 -17.2% vs -30.8%；2022-24 -4.2% vs -31.8%），但 2024-09 急涨跑输（+8.3% vs +34.2%）。
+
+> **预期收益请按"含成本 +10~15%/年、回撤 -20~-30%"规划**（6.4年回测的 +20% 属结构性行情偏乐观；全周期跨牛熊约 +8%）。
+> 详见 `reports/tier1_validation_*.md`、`reports/voltarget_validation_*.md`、`reports/longhistory_validation_*.md`。
 
 预期请按"含成本 +15~20%/年、回撤 -20~-30%"规划。
 
