@@ -26,3 +26,6 @@ Thumbs.db
 
 # 缓存
 *.log
+
+# 本地缓存
+reports/*_cache.json

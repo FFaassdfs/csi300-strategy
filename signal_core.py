@@ -55,6 +55,80 @@ def adjust_splits(df, min_ratio=1.8, log=None):
     return events
 
 
+def fetch_erp_percentile():
+    """ERP(沪深300盈利收益率 - 10年国债收益率) 的滚动5年分位 (0-100), 低=股票极贵.
+    用于"极端泡沫保险": 分位<10 建议减半仓, <20 提示偏贵. 失败返回 None(不阻塞).
+    结果按日缓存到 reports/erp_cache.json (PE为月频, 分位变化慢)"""
+    import os, json
+    cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reports', 'erp_cache.json')
+    today = str(pd.Timestamp.now().date())
+    try:
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            c = json.load(f)
+        if c.get('date') == today and c.get('pct') is not None:
+            return c['pct']
+    except Exception:
+        c = {}
+    try:
+        import akshare as ak
+        pe = ak.stock_index_pe_lg(symbol='沪深300')
+        pcol = '滚动市盈率' if '滚动市盈率' in pe.columns else [x for x in pe.columns if '市盈率' in x][0]
+        pe = pe[['日期', pcol]].rename(columns={pcol: 'pe'})
+        pe['日期'] = pd.to_datetime(pe['日期'])
+        pe = pe.dropna().sort_values('日期').set_index('日期')
+        y = ak.bond_zh_us_rate()
+        y = y[['日期', '中国国债收益率10年']].rename(columns={'中国国债收益率10年': 'y10'})
+        y['日期'] = pd.to_datetime(y['日期'])
+        y = y.dropna().sort_values('日期').set_index('日期')
+        df = pe.join(y, how='outer').sort_index().ffill().dropna()
+        df['erp'] = 100.0 / df['pe'] - df['y10']
+        s = df['erp']
+        win = s.iloc[-1260:] if len(s) > 1260 else s
+        pct = round(float((s.iloc[-1] > win.iloc[:-1]).mean() * 100), 1)
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump({'date': today, 'pct': pct, 'erp': round(float(s.iloc[-1]), 2)}, f)
+        except Exception:
+            pass
+        return pct
+    except Exception:
+        return c.get('pct') if c else None
+
+
+def fetch_cb_ipo_today():
+    """今日可转债申购列表 (无则返回 []), 供邮件提醒打新 (无市值门槛)"""
+    try:
+        import akshare as ak
+        df = ak.bond_zh_cov()
+        if df is None or len(df) == 0:
+            return []
+        dt = pd.to_datetime(df['申购日期'], errors='coerce').dt.normalize()
+        rows = df[dt == pd.Timestamp.now().normalize()]
+        return [f"{r['债券简称']}({r['债券代码']})" for _, r in rows.iterrows()]
+    except Exception:
+        return []
+
+
+def repo_timing_note(d=None):
+    """逆回购择时提示 (月末/季末/年末/长假前资金利率常走高); 无提示时返回 None"""
+    d = pd.Timestamp(d) if d is not None else pd.Timestamp.now()
+    notes = []
+    if d.month in (3, 6, 9, 12) and (d + pd.Timedelta(days=7)).month != d.month:
+        notes.append('季末')
+    elif (d + pd.Timedelta(days=4)).month != d.month:
+        notes.append('月末')
+    if d.month == 12 and d.day >= 20:
+        notes.append('年末')
+    # 长假前 (国庆/春节/劳动节/元旦前后5天)
+    for m, dd, nm in ((10, 1, '国庆'), (5, 1, '劳动节'), (1, 1, '元旦')):
+        tgt = pd.Timestamp(year=d.year, month=m, day=dd)
+        if 0 <= (tgt - d).days <= 5:
+            notes.append(f'{nm}长假前')
+    if notes:
+        return '、'.join(dict.fromkeys(notes)) + '资金面通常收紧, 闲钱逆回购(204001/GC001)利率常走高'
+    return None
+
+
 def compute_signal_core(c, h, l, ma_p=30, adx_th=20, vol_th=18):
     """
     ADX Override 核心计算

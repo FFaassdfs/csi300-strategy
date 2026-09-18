@@ -33,7 +33,8 @@ except Exception:
 from config import ASSETS, ORDER, PROJECT_ROOT as ROOT, HISTORY_DB
 from signal_core import (last_signal_state, compute_confidence, qvix_position_ratio,
                          fetch_qvix, CONFIRM_DAYS, vol_brake_weight, VOL_BRAKE_THRESHOLD,
-                         position_shares_from_csv)
+                         position_shares_from_csv, fetch_erp_percentile,
+                         fetch_cb_ipo_today, repo_timing_note)
 
 # ========== 邮件配置 ==========
 # ⚠️ 授权码已移出版本库 (2026-09-10 曾泄漏到公开 GitHub 仓库, 务必已重置旧授权码)
@@ -365,6 +366,36 @@ def build_email_html(mode, signals, holdings, missing=None):
         L.append(f'<p>📊 <b>QVIX恐慌指数</b>: {qvix_txt} → 买入按 <b>{qratio:.0%}</b> 仓位执行 ({qnote})')
     else:
         L.append(f'<p>📊 <b>QVIX恐慌指数</b>: 获取失败, 按100%仓位执行')
+    # ERP 估值警戒 (极端泡沫保险): 分位<10 极贵→建议减半, <20 偏贵→提示
+    try:
+        erp_pct = fetch_erp_percentile()
+    except Exception:
+        erp_pct = None
+    if erp_pct is not None:
+        if erp_pct < 10:
+            L.append(f'<div style="border:2px solid #c00;background:#fff3f3;padding:8px;margin:8px 0;">'
+                     f'<b style="color:#c00;">🔥 估值极贵警戒</b>: 沪深300 ERP 分位 {erp_pct}% (&lt;10%, 股票相对债券极贵) '
+                     f'→ 历史上此类位置多为泡沫顶部, <b>建议将仓位减半</b></div>')
+        elif erp_pct < 20:
+            L.append(f'<p>📉 <b>估值偏贵提示</b>: 沪深300 ERP 分位 {erp_pct}% (&lt;20%)，可考虑降低仓位</p>')
+        else:
+            L.append(f'<p>📉 沪深300 ERP 分位: {erp_pct}% (中性, 无需动作)</p>')
+    # 打新提醒 (可转债打新无市值门槛)
+    try:
+        cbs = fetch_cb_ipo_today()
+    except Exception:
+        cbs = []
+    if cbs:
+        L.append(f'<div style="border:2px dashed #27ae60;background:#f2fdf5;padding:8px;margin:8px 0;">'
+                 f'<b style="color:#27ae60;">🆕 今日可转债申购</b>: {"、".join(cbs)} '
+                 f'— 无需市值门槛, 建议顶格申购 (中签后需缴款, 请留意)</div>')
+    # 逆回购择时
+    try:
+        repo_note = repo_timing_note()
+    except Exception:
+        repo_note = None
+    if repo_note:
+        L.append(f'<p>💵 <b>现金管理</b>: {repo_note}</p>')
     L.append(f'<p>💰 当前资金: 现金 ¥{cash:,.0f}, 总资产约 ¥{total_value:,.0f}</p>')
     L.append('<p style="color:#999;font-size:12px;">' + ('* 午间信号基于上午数据, 下午行情可能变化, 若下午信号转强/转弱, 以收盘邮件为准' if is_mid else '* 收盘信号为当日最终信号, 次日按此执行') + '</p>')
 

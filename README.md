@@ -73,3 +73,5 @@ baostock  akshare  pandas  duckdb   # requirements.txt
 - 信号唯一实现 `signal_core.py`，任何口径修改只改这里
 - 交易执行后必须登记 `trades/<代码>_trades.csv` 且 balance 必填（邮件现金显示依赖它）
 - **执行质量是实盘最大变量**：2026-06~09 的 12 笔实盘平均滑点 买+124bp/卖+235bp（回测假设仅10bp），累计滑点成本 ¥872（约初始资金 8.7%）——按开盘价附近挂单、不追高、及早执行；可用 `python slippage_report.py` 复盘
+- **邮件已内置三项执行提醒**：ERP 估值警戒（极端泡沫时提示减半仓）、可转债申购提醒（无市值门槛）、逆回购择时（月末/季末利率高点）
+- **完整执行清单见 [OPERATION.md](OPERATION.md) §十三 策略清单**
