@@ -167,6 +167,41 @@ def check_position(code):
     return position_shares_from_csv(os.path.join(PROJECT_ROOT, 'trades', f'{code}_trades.csv'))
 
 
+def build_intraday_review_html(signals):
+    """close模式: 今日盘中预警 vs 收盘信号 → 兑现/未兑现回顾 (无当日预警返回None)
+    数据源: preclose_signal.py 写入的 reports/alert_state.json (open_instructions=当日预警记录)"""
+    import json
+    path = os.path.join(ROOT, 'reports', 'alert_state.json')
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            st = json.load(f)
+    except Exception:
+        return None
+    today = datetime.now().strftime('%Y-%m-%d')
+    if st.get('date') != today or not st.get('open_instructions'):
+        return None
+    lines = []
+    for i in st['open_instructions']:
+        s = signals.get(i.get('code'))
+        if s is None:
+            continue
+        name = ASSETS.get(i['code'], {}).get('name', i['code'])
+        if i['type'] == 'sell':
+            if s['signal'] == 0:
+                lines.append(f'☑ 预警兑现: {name} 收盘信号仍翻空 → <b>明日开盘卖出</b> (见上方指令)')
+            else:
+                lines.append(f'○ 预警未兑现(信号抖动): {name} 收盘恢复持有 → 明日继续持有, 不操作')
+        else:
+            if s['signal'] == 1 and s.get('confirmed') == 1:
+                lines.append(f'☑ 预警兑现: {name} 收盘确认仍在 → <b>明日开盘买入</b> (以本邮件指令为准)')
+            else:
+                lines.append(f'○ 预警未兑现(信号抖动): {name} 收盘确认已失效 → 不买入')
+    if not lines:
+        return None
+    return ('<div style="border:1px solid #999;background:#fafafa;padding:8px;margin:8px 0;">'
+            '<b>📋 盘中预警回顾 (vs 收盘信号)</b><br>' + '<br>'.join(lines) + '</div>')
+
+
 # ========== 邮件正文生成 ==========
 def get_cash():
     """读取当前现金 (取所有交易记录中日期最新的一笔有效balance)
@@ -335,6 +370,12 @@ def build_email_html(mode, signals, holdings, missing=None):
                  f'<span style="color:#333;">信号已空仓或轮动转向, 必须卖出</span><br>'
                  f'<span style="color:#999;font-size:12px;">执行时间: {time_txt} | 现价 {s.get("price", 0):.4f}</span>'
                  f'</div>')
+
+    # 盘中预警回顾 (仅收盘模式): 今日盘中预警 vs 收盘信号, 兑现/未兑现
+    if not is_mid:
+        review = build_intraday_review_html(signals)
+        if review:
+            L.append(review)
 
     # ===== 二、信号明细 =====
     L.append(f'<h3 style="background:#333;color:white;padding:8px;">二、信号明细</h3>')

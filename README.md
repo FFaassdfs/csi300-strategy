@@ -59,8 +59,6 @@ python send_advice.py close # 手动发收盘邮件
 > **预期收益请按"含成本 +10~15%/年、回撤 -20~-30%"规划**（6.4年回测的 +20% 属结构性行情偏乐观；全周期跨牛熊约 +8%）。
 > 详见 `reports/tier1_validation_*.md`、`reports/voltarget_validation_*.md`、`reports/longhistory_validation_*.md`。
 
-预期请按"含成本 +15~20%/年、回撤 -20~-30%"规划。
-
 ## 依赖
 
 ```
