@@ -129,7 +129,7 @@ def build_alert_html(instructions, signals, holdings, qvix, qratio, missing, pre
         else:
             title = _hdr(f'▶ 买入预告 — {ins["name"]} ({ins["code"]}) '
                          f'<span style="font-size:13px;font-weight:normal;">置信{ins["conf"]}</span>', '#c0392b')
-            cells = (_cell('<b>挂单上限</b> (现价+1%)', f'{ins["price"]*1.01:.4f}', '#c0392b')
+            cells = (_hl_cell('挂单上限 (现价+1%)', f'{ins["price"]*1.01:.4f}')
                      + _cell('现价', f'{ins["price"]:.4f}')
                      + _cell('明日买入金额', f'¥{ins["amount"]:,.0f}')
                      + _cell('约份额', f'{ins["shares"]:,}份'))
@@ -189,6 +189,15 @@ def _cell(label, value, color='#333'):
             f'<div style="font-size:30px;font-weight:bold;color:{color};">{value}</div></td>')
 
 
+def _hl_cell(label, value, bg='#c0392b', fg='#ffffff'):
+    """高亮单元: 彩色背景徽章式大数字 (挂单上限等关键值; 嵌套表格实现, 邮箱兼容)"""
+    return (f'<td style="padding-right:36px;vertical-align:bottom;">'
+            f'<div style="color:#999;font-size:13px;">{label}</div>'
+            f'<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:2px;">'
+            f'<tr><td style="background:{bg};color:{fg};font-size:30px;font-weight:bold;'
+            f'padding:4px 14px;border-radius:8px;">{value}</td></tr></table></td>')
+
+
 def build_morning_html(instructions, signals, holdings, qvix, qratio, missing):
     """开盘执行提醒 (9:00): 昨晚16:00收盘邮件指令的重发, 防忘记"""
     today = datetime.now().strftime('%Y-%m-%d')
@@ -210,7 +219,7 @@ def build_morning_html(instructions, signals, holdings, qvix, qratio, missing):
         else:
             title = _hdr(f'▶ 开盘买入 — {ins["name"]} ({ins["code"]}) '
                          f'<span style="font-size:13px;font-weight:normal;">置信{ins["conf"]}</span>', '#c0392b')
-            cells = (_cell('<b>挂单上限</b> (昨收+1%)', f'{ins["price"]*1.01:.4f}', '#c0392b')
+            cells = (_hl_cell('挂单上限 (昨收+1%)', f'{ins["price"]*1.01:.4f}')
                      + _cell('昨收参考价', f'{ins["price"]:.4f}')
                      + _cell('买入金额', f'¥{ins["amount"]:,.0f}')
                      + _cell('约份额', f'{ins["shares"]:,}份'))

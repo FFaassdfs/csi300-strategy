@@ -224,6 +224,15 @@ def _cell(label, value, color='#333'):
             f'<div style="font-size:30px;font-weight:bold;color:{color};">{value}</div></td>')
 
 
+def _hl_cell(label, value, bg='#c0392b', fg='#ffffff'):
+    """高亮单元: 彩色背景徽章式大数字 (挂单上限等关键值; 嵌套表格实现, 邮箱兼容)"""
+    return (f'<td style="padding-right:36px;vertical-align:bottom;">'
+            f'<div style="color:#999;font-size:13px;">{label}</div>'
+            f'<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:2px;">'
+            f'<tr><td style="background:{bg};color:{fg};font-size:30px;font-weight:bold;'
+            f'padding:4px 14px;border-radius:8px;">{value}</td></tr></table></td>')
+
+
 # ========== 邮件正文生成 ==========
 def get_cash():
     """读取当前现金 (取所有交易记录中日期最新的一笔有效balance)
@@ -344,7 +353,7 @@ def build_email_html(mode, signals, holdings, missing=None):
             action = '买入' if conf['level'] == '强' else '买入(半仓)'
             hdr_txt = (f'▶ {time_txt}{action} — {s["name"]} ({pick}) '
                        f'<span style="font-size:13px;font-weight:normal;">置信{conf["level"]} {conf["score"]}分</span>')
-            cells = (_cell('<b>挂单上限</b> (信号收盘+1%)', f'{s["price"]*1.01:.4f}', '#c0392b')
+            cells = (_hl_cell('挂单上限 (信号收盘+1%)', f'{s["price"]*1.01:.4f}')
                      + _cell('信号日收盘', f'{s["price"]:.4f}')
                      + _cell('买入金额', f'¥{amt:,.0f}')
                      + _cell('约份额', f'{shares:,}份'))
