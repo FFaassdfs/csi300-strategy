@@ -115,24 +115,30 @@ def build_alert_html(instructions, signals, holdings, qvix, qratio, missing, pre
         L.append(f'<div style="border:2px solid #d00;background:#fff3f3;padding:8px;margin:8px 0;">'
                  f'<b style="color:#d00;">⚠ 数据异常</b>: {names} 信号缺失, 谨慎参考</div>')
     for ins in instructions:
-        crit = ('<br><span style="color:#d80;">⚠ 临界状态(贴近MA30/ADX阈值), 信号翻转概率高, 预告可靠性低</span>'
+        crit = ('<span style="color:#d80;">　<b>⚠ 临界状态</b>(贴近MA30/ADX阈值), 信号翻转概率高, 预告可靠性低</span>'
                 if ins.get('critical') else '')
         if ins['type'] == 'sell':
-            L.append(f'<div style="border:2px solid red;border-radius:8px;padding:12px;margin:8px 0;background:#fff8f8;">'
-                     f'<b style="font-size:16px;color:red;">▶ 卖出预告</b> <b>{ins["name"]}</b> 全部 {ins["shares"]} 份<br>'
-                     f'<span style="color:#333;">盘中信号已翻空 ({ins["reason"]}); 若收盘维持, '
-                     f'<b>明日开盘卖出</b> — <b>无条件执行</b>: 不设价格限制, 价格再低也跑, '
-                     f'市价/对手价挂单确保成交</span>'
-                     f'{crit}<br><span style="color:#999;font-size:12px;">现价 {ins["price"]:.4f} | '
-                     f'今日第{ins["count"]}次预告</span></div>')
+            title = _hdr(f'▶ 卖出预告 — {ins["name"]} ({ins["code"]})', '#0a8f3c')
+            cells = (_cell('持仓份额', f'{ins["shares"]:,}份', '#0e7a35')
+                     + _cell('现价', f'{ins["price"]:.4f}'))
+            rules = (f'盘中信号已翻空 ({ins["reason"]}); 若收盘维持 → '
+                     f'<b style="color:#0e7a35;">明日开盘卖出 — 无条件执行, 不设任何价格限制, 价格再低也跑</b><br>'
+                     f'<span style="color:#333;">市价/对手价挂单确保成交 · 勿拖到下午</span>'
+                     f'{crit}　<span style="color:#999;font-size:12px;">今日第{ins["count"]}次预告</span>')
+            L.append(_card(title, cells, rules, '#0a8f3c', '#f0fff4'))
         else:
-            L.append(f'<div style="border:2px solid #c00;border-radius:8px;padding:12px;margin:8px 0;background:#fff;">'
-                     f'<b style="font-size:16px;color:#c00;">▶ 买入预告</b> <b>{ins["name"]}</b> 约¥{ins["amount"]:,.0f} '
-                     f'(≈{ins["shares"]}份)<br>'
-                     f'<span style="color:#333;">确认成立(连续2日信号); 若收盘维持, <b>明日开盘买入</b>, '
-                     f'金额=可用¥{ins["base"]:,.0f} × QVIX{qratio:.0%} × 刹车{ins["brake_w"]:.0%}</span>'
-                     f'{crit}<br><span style="color:#999;font-size:12px;">挂单上限 ≈{ins["price"]*1.01:.4f} '
-                     f'(现价+1%, 不追高); 高开超上限不追等次日; 低开直接买(更便宜)</span></div>')
+            title = _hdr(f'▶ 买入预告 — {ins["name"]} ({ins["code"]}) '
+                         f'<span style="font-size:13px;font-weight:normal;">置信{ins["conf"]}</span>', '#c0392b')
+            cells = (_cell('<b>挂单上限</b> (现价+1%)', f'{ins["price"]*1.01:.4f}', '#c0392b')
+                     + _cell('现价', f'{ins["price"]:.4f}')
+                     + _cell('明日买入金额', f'¥{ins["amount"]:,.0f}')
+                     + _cell('约份额', f'{ins["shares"]:,}份'))
+            rules = (f'确认成立(连续2日信号); 若收盘维持 → <b style="color:#c0392b;">明日开盘买入</b><br>'
+                     f'<b style="color:#c0392b;">⛔ 高开超上限 → 不追</b>等回落/次日　'
+                     f'<b style="color:#0e7a35;">⬇ 低开 → 直接买（更便宜）</b><br>'
+                     f'<span style="color:#333;">金额 = 可用¥{ins["base"]:,.0f} × QVIX{qratio:.0%} × '
+                     f'刹车{ins["brake_w"]:.0%}</span>{crit}')
+            L.append(_card(title, cells, rules, '#c0392b', '#fff5f5'))
     L.append('<h3>盘中信号明细</h3><table border="1" cellpadding="5" cellspacing="0" style="border-collapse:collapse;">')
     L.append('<tr style="background:#f0f0f0;"><th>品种</th><th>现价</th><th>MA30</th><th>ADX</th>'
              '<th>波动</th><th>信号</th><th>确认</th><th>持仓</th></tr>')
@@ -161,6 +167,28 @@ def build_alert_html(instructions, signals, holdings, qvix, qratio, missing, pre
     return '\n'.join(L)
 
 
+# ---- 邮件票据卡构造器 (纯表格, 邮箱兼容; 红买绿卖A股习惯) ----
+def _card(title_html, cells_html, rules_html, border, rules_bg):
+    return (f'<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:12px 0;">'
+            f'<tr><td style="border:3px solid {border};border-radius:10px;background:#fff;padding:0;">'
+            f'<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">'
+            f'<tr>{title_html}</tr>'
+            f'<tr><td style="padding:14px 16px;">'
+            f'<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>{cells_html}</tr></table>'
+            f'<div style="background:{rules_bg};border-radius:6px;padding:10px 12px;margin-top:10px;font-size:14px;">{rules_html}</div>'
+            f'</td></tr></table></td></tr></table>')
+
+
+def _hdr(text, bg):
+    return f'<td style="background:{bg};color:#fff;padding:10px 16px;font-size:18px;font-weight:bold;">{text}</td>'
+
+
+def _cell(label, value, color='#333'):
+    return (f'<td style="padding-right:36px;vertical-align:bottom;">'
+            f'<div style="color:#999;font-size:13px;">{label}</div>'
+            f'<div style="font-size:30px;font-weight:bold;color:{color};">{value}</div></td>')
+
+
 def build_morning_html(instructions, signals, holdings, qvix, qratio, missing):
     """开盘执行提醒 (9:00): 昨晚16:00收盘邮件指令的重发, 防忘记"""
     today = datetime.now().strftime('%Y-%m-%d')
@@ -172,19 +200,25 @@ def build_morning_html(instructions, signals, holdings, qvix, qratio, missing):
                  f'<b style="color:#d00;">⚠ 数据异常</b>: {names} 信号缺失, 以昨晚收盘邮件为准</div>')
     for ins in instructions:
         if ins['type'] == 'sell':
-            L.append(f'<div style="border:2px solid red;border-radius:8px;padding:12px;margin:8px 0;background:#fff8f8;">'
-                     f'<b style="font-size:16px;color:red;">▶ 开盘卖出</b> <b>{ins["name"]}</b> 全部 {ins["shares"]} 份<br>'
-                     f'<span style="color:#333;">昨日收盘信号翻空 ({ins["reason"]}) — <b>无条件执行</b>: '
-                     f'不设价格限制, 价格再低也跑, 市价/对手价挂单确保成交</span><br>'
-                     f'<span style="color:#999;font-size:12px;">尽早执行勿拖到下午 | 昨收 {ins["price"]:.4f}</span></div>')
+            title = _hdr(f'▶ 开盘卖出 — {ins["name"]} ({ins["code"]})', '#0a8f3c')
+            cells = (_cell('持仓份额', f'{ins["shares"]:,}份', '#0e7a35')
+                     + _cell('昨收参考', f'{ins["price"]:.4f}'))
+            rules = (f'<b style="color:#0e7a35;">⚠ 无条件执行 — 不设任何价格限制, 价格再低也跑</b><br>'
+                     f'<span style="color:#333;">市价/对手价挂单确保成交 · 开盘尽早执行勿拖到下午'
+                     f'（实测尾盘杀跌 -6.7%）<br>原因: {ins["reason"]}</span>')
+            L.append(_card(title, cells, rules, '#0a8f3c', '#f0fff4'))
         else:
-            L.append(f'<div style="border:2px solid #c00;border-radius:8px;padding:12px;margin:8px 0;background:#fff;">'
-                     f'<b style="font-size:16px;color:#c00;">▶ 开盘买入</b> <b>{ins["name"]}</b> 约¥{ins["amount"]:,.0f} '
-                     f'(≈{ins["shares"]}份)<br>'
-                     f'<span style="color:#333;">昨日收盘确认成立(连续2日信号), '
-                     f'金额=可用¥{ins["base"]:,.0f} × QVIX{qratio:.0%} × 刹车{ins["brake_w"]:.0%}</span><br>'
-                     f'<span style="color:#999;font-size:12px;">挂单上限 ≈{ins["price"]*1.01:.4f} (昨收+1%, 不追高); '
-                     f'高开超上限不追; 低开直接买(更便宜) | 昨收 {ins["price"]:.4f}</span></div>')
+            title = _hdr(f'▶ 开盘买入 — {ins["name"]} ({ins["code"]}) '
+                         f'<span style="font-size:13px;font-weight:normal;">置信{ins["conf"]}</span>', '#c0392b')
+            cells = (_cell('<b>挂单上限</b> (昨收+1%)', f'{ins["price"]*1.01:.4f}', '#c0392b')
+                     + _cell('昨收参考价', f'{ins["price"]:.4f}')
+                     + _cell('买入金额', f'¥{ins["amount"]:,.0f}')
+                     + _cell('约份额', f'{ins["shares"]:,}份'))
+            rules = (f'<b style="color:#c0392b;">⛔ 高开超上限 → 不追</b><span style="color:#333;">, '
+                     f'等盘中回落或次日</span>　　<b style="color:#0e7a35;">⬇ 低开 → 直接买（更便宜）</b><br>'
+                     f'<span style="color:#333;">金额 = 可用¥{ins["base"]:,.0f} × QVIX{qratio:.0%} × '
+                     f'刹车{ins["brake_w"]:.0%}</span>')
+            L.append(_card(title, cells, rules, '#c0392b', '#fff5f5'))
     L.append('<h3>昨日收盘信号 (指令依据)</h3><table border="1" cellpadding="5" cellspacing="0" style="border-collapse:collapse;">')
     L.append('<tr style="background:#f0f0f0;"><th>品种</th><th>收盘</th><th>信号</th><th>确认</th><th>持仓</th></tr>')
     for code in ORDER:

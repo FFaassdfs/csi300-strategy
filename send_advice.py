@@ -202,6 +202,28 @@ def build_intraday_review_html(signals):
             '<b>📋 盘中预警回顾 (vs 收盘信号)</b><br>' + '<br>'.join(lines) + '</div>')
 
 
+# ========== 邮件票据卡构造器 (纯表格, 邮箱兼容; 红买绿卖A股习惯) ==========
+def _card(title_html, cells_html, rules_html, border, rules_bg):
+    return (f'<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:12px 0;">'
+            f'<tr><td style="border:3px solid {border};border-radius:10px;background:#fff;padding:0;">'
+            f'<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">'
+            f'<tr>{title_html}</tr>'
+            f'<tr><td style="padding:14px 16px;">'
+            f'<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>{cells_html}</tr></table>'
+            f'<div style="background:{rules_bg};border-radius:6px;padding:10px 12px;margin-top:10px;font-size:14px;">{rules_html}</div>'
+            f'</td></tr></table></td></tr></table>')
+
+
+def _hdr(text, bg):
+    return f'<td style="background:{bg};color:#fff;padding:10px 16px;font-size:18px;font-weight:bold;">{text}</td>'
+
+
+def _cell(label, value, color='#333'):
+    return (f'<td style="padding-right:36px;vertical-align:bottom;">'
+            f'<div style="color:#999;font-size:13px;">{label}</div>'
+            f'<div style="font-size:30px;font-weight:bold;color:{color};">{value}</div></td>')
+
+
 # ========== 邮件正文生成 ==========
 def get_cash():
     """读取当前现金 (取所有交易记录中日期最新的一笔有效balance)
@@ -294,6 +316,7 @@ def build_email_html(mode, signals, holdings, missing=None):
         conf = s['conf']
         hold = holdings.get(pick, 0)
         time_txt = '下午' if is_mid else '明天开盘'
+        render_generic = True
         if hold > 0:
             if s.get('brake_w', 1.0) < 1.0:
                 # 极端波动刹车: 持仓品种波动率超阈值, 减仓至上限
@@ -311,29 +334,37 @@ def build_email_html(mode, signals, holdings, missing=None):
             action = '观望(待确认)'
             detail = f'信号首日, 需连续{CONFIRM_DAYS}日确认, 今日不追; 明日若信号仍在则可买入'
             color = 'gray'
-        elif conf['level'] == '强':
-            action = '买入'
+        elif conf['level'] in ('强', '中'):
+            # 买入 → 票据卡: 挂单上限/信号日收盘 大数字
+            render_generic = False
             amt = buy_base * qratio * s.get('brake_w', 1.0)
-            detail = (f'买入约¥{amt:,.0f} (可用资金¥{buy_base:,.0f} × QVIX{qratio:.0%} × 波动刹车{s.get("brake_w", 1.0):.0%}), '
-                      f'挂单上限 ≈{s["price"]*1.01:.4f} (现价+1%, 不追高); 高开超上限不追, 等盘中回落或次日; 低开直接买(更便宜)')
-            color = 'red'
-        elif conf['level'] == '中':
-            action = '买入(半仓)'
-            amt = buy_base * qratio * s.get('brake_w', 1.0) / 2
-            detail = (f'买入约¥{amt:,.0f} (可用资金¥{buy_base:,.0f} × QVIX{qratio:.0%} × 波动刹车{s.get("brake_w", 1.0):.0%} × 50%), '
-                      f'挂单上限 ≈{s["price"]*1.01:.4f} (现价+1%, 不追高); 高开超上限不追, 等盘中回落或次日; 低开直接买(更便宜)')
-            color = 'orange'
+            if conf['level'] == '中':
+                amt /= 2
+            shares = int(amt / s['price'] / 100) * 100
+            action = '买入' if conf['level'] == '强' else '买入(半仓)'
+            hdr_txt = (f'▶ {time_txt}{action} — {s["name"]} ({pick}) '
+                       f'<span style="font-size:13px;font-weight:normal;">置信{conf["level"]} {conf["score"]}分</span>')
+            cells = (_cell('<b>挂单上限</b> (信号收盘+1%)', f'{s["price"]*1.01:.4f}', '#c0392b')
+                     + _cell('信号日收盘', f'{s["price"]:.4f}')
+                     + _cell('买入金额', f'¥{amt:,.0f}')
+                     + _cell('约份额', f'{shares:,}份'))
+            rules = (f'<b style="color:#c0392b;">⛔ 高开超上限 → 不追</b><span style="color:#333;">, '
+                     f'等盘中回落或次日</span>　　<b style="color:#0e7a35;">⬇ 低开 → 直接买（更便宜）</b><br>'
+                     f'<span style="color:#333;">金额 = 可用¥{buy_base:,.0f} × QVIX{qratio:.0%} × '
+                     f'波动刹车{s.get("brake_w", 1.0):.0%}' + (' × 50%' if conf['level'] == '中' else '') + '</span>')
+            L.append(_card(_hdr(hdr_txt, '#c0392b'), cells, rules, '#c0392b', '#fff5f5'))
         else:
             action = '观望'
             detail = '不买入(弱信号, 等收盘确认)'
             color = 'gray'
 
-        L.append(f'<div style="border:2px solid {color};border-radius:8px;padding:12px;margin:8px 0;background:#fff;">'
-                 f'<b style="font-size:16px;color:{color};">▶ {action}</b> '
-                 f'<b>{s["name"]}</b> (置信{conf["level"]} {conf["score"]}分)<br>'
-                 f'<span style="color:#333;">{detail}</span><br>'
-                 f'<span style="color:#999;font-size:12px;">执行时间: {time_txt} | 现价 {s["price"]:.4f} | 轮动首选(ADX {s["adx"]})</span>'
-                 f'</div>')
+        if render_generic:
+            L.append(f'<div style="border:2px solid {color};border-radius:8px;padding:12px;margin:8px 0;background:#fff;">'
+                     f'<b style="font-size:16px;color:{color};">▶ {action}</b> '
+                     f'<b>{s["name"]}</b> (置信{conf["level"]} {conf["score"]}分)<br>'
+                     f'<span style="color:#333;">{detail}</span><br>'
+                     f'<span style="color:#999;font-size:12px;">执行时间: {time_txt} | 现价 {s["price"]:.4f} | 轮动首选(ADX {s["adx"]})</span>'
+                     f'</div>')
 
         # 有信号但非首选的品种 → 明确不买, 避免误操作
         for code in candidates[1:]:
@@ -364,13 +395,13 @@ def build_email_html(mode, signals, holdings, missing=None):
         hold = holdings[code]
         s = signals.get(code, {})
         time_txt = '下午' if is_mid else '明天开盘'
-        L.append(f'<div style="border:2px solid red;border-radius:8px;padding:12px;margin:8px 0;background:#fff8f8;">'
-                 f'<b style="font-size:16px;color:red;">▶ 卖出</b> '
-                 f'<b>{ASSETS[code]["name"]}</b> 全部 {hold} 份<br>'
-                 f'<span style="color:#333;">信号已空仓或轮动转向, <b>无条件卖出</b>: '
-                 f'不设任何价格限制, 价格再低也跑, 市价/对手价挂单确保成交</span><br>'
-                 f'<span style="color:#999;font-size:12px;">执行时间: {time_txt} | 尽早执行勿拖到下午 | 现价 {s.get("price", 0):.4f}</span>'
-                 f'</div>')
+        hdr_txt = f'▶ {time_txt}卖出 — {ASSETS[code]["name"]} ({code})'
+        cells = (_cell('持仓份额', f'{hold:,}份', '#0e7a35')
+                 + _cell('信号日收盘', f'{s.get("price", 0):.4f}'))
+        rules = (f'<b style="color:#0e7a35;">⚠ 无条件卖出 — 不设任何价格限制, 价格再低也跑</b><br>'
+                 f'<span style="color:#333;">信号已空仓或轮动转向 · 市价/对手价挂单确保成交 · '
+                 f'尽早执行勿拖到下午（实测尾盘杀跌 -6.7%）</span>')
+        L.append(_card(_hdr(hdr_txt, '#0a8f3c'), cells, rules, '#0a8f3c', '#f0fff4'))
 
     # 盘中预警回顾 (仅收盘模式): 今日盘中预警 vs 收盘信号, 兑现/未兑现
     if not is_mid:
