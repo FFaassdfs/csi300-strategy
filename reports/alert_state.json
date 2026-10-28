@@ -1,0 +1,7 @@
+{
+ "date": "2026-10-28",
+ "last_signals": {"510310": 0, "159995": 0, "512800": 1},
+ "sell_alerts": {},
+ "buy_alerted": ["512800"],
+ "open_instructions": [{"type": "buy", "code": "512800", "name": "银行ETF"}]
+}

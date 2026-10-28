@@ -315,13 +315,13 @@ def build_email_html(mode, signals, holdings, missing=None):
             action = '买入'
             amt = buy_base * qratio * s.get('brake_w', 1.0)
             detail = (f'买入约¥{amt:,.0f} (可用资金¥{buy_base:,.0f} × QVIX{qratio:.0%} × 波动刹车{s.get("brake_w", 1.0):.0%}), '
-                      f'挂单价格 {s["price"]:.4f} 附近, 不追高超过 +1%')
+                      f'挂单上限 ≈{s["price"]*1.01:.4f} (现价+1%, 不追高); 高开超上限不追, 等盘中回落或次日; 低开直接买(更便宜)')
             color = 'red'
         elif conf['level'] == '中':
             action = '买入(半仓)'
             amt = buy_base * qratio * s.get('brake_w', 1.0) / 2
             detail = (f'买入约¥{amt:,.0f} (可用资金¥{buy_base:,.0f} × QVIX{qratio:.0%} × 波动刹车{s.get("brake_w", 1.0):.0%} × 50%), '
-                      f'挂单价格 {s["price"]:.4f} 附近, 收盘确认后再补')
+                      f'挂单上限 ≈{s["price"]*1.01:.4f} (现价+1%, 不追高); 高开超上限不追, 等盘中回落或次日; 低开直接买(更便宜)')
             color = 'orange'
         else:
             action = '观望'
@@ -367,8 +367,9 @@ def build_email_html(mode, signals, holdings, missing=None):
         L.append(f'<div style="border:2px solid red;border-radius:8px;padding:12px;margin:8px 0;background:#fff8f8;">'
                  f'<b style="font-size:16px;color:red;">▶ 卖出</b> '
                  f'<b>{ASSETS[code]["name"]}</b> 全部 {hold} 份<br>'
-                 f'<span style="color:#333;">信号已空仓或轮动转向, 必须卖出</span><br>'
-                 f'<span style="color:#999;font-size:12px;">执行时间: {time_txt} | 现价 {s.get("price", 0):.4f}</span>'
+                 f'<span style="color:#333;">信号已空仓或轮动转向, <b>无条件卖出</b>: '
+                 f'不设任何价格限制, 价格再低也跑, 市价/对手价挂单确保成交</span><br>'
+                 f'<span style="color:#999;font-size:12px;">执行时间: {time_txt} | 尽早执行勿拖到下午 | 现价 {s.get("price", 0):.4f}</span>'
                  f'</div>')
 
     # 盘中预警回顾 (仅收盘模式): 今日盘中预警 vs 收盘信号, 兑现/未兑现
